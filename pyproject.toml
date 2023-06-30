@@ -14,10 +14,11 @@ dependencies = [
 [project.optional-dependencies]
 # Here you define your development dependencies
 dev = [
-    "pytest",
-    "pre-commit",
-    "flake8",
+    "black",
     "flake8-pyproject",
+    "flake8",
+    "pre-commit",
+    "pytest",
 ]
 
 [build-system]
