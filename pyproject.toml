@@ -21,3 +21,20 @@ dev = [
 [build-system]
 build-backend = "flit_core.buildapi"
 requires = ["flit_core >=3.2,<4"]
+
+[tool.black]
+line-length = 88
+include = '\.pyi?$'
+exclude = '''
+/(
+    \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | _build
+  | buck-out
+  | build
+  | dist
+)/
+'''

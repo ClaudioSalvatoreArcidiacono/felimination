@@ -18,7 +18,9 @@ from sklearn.utils.parallel import Parallel, delayed
 from felimination.importance import PermutationImportance
 
 
-def _train_score_get_importance(estimator, X, y, train, test, scorer, importance_getter):
+def _train_score_get_importance(
+    estimator, X, y, train, test, scorer, importance_getter
+):
     """
     Return the score for a fit across one fold.
     """
@@ -28,11 +30,15 @@ def _train_score_get_importance(estimator, X, y, train, test, scorer, importance
     estimator = estimator.fit(X_train, y_train)
     train_score = _score(estimator, X_train, y_train, scorer)
     test_score = _score(estimator, X_test, y_test, scorer)
-    importances = _get_feature_importances(estimator, importance_getter, X=X_test, y=y_test)
+    importances = _get_feature_importances(
+        estimator, importance_getter, X=X_test, y=y_test
+    )
     return train_score, test_score, importances
 
 
-def _get_feature_importances(estimator, getter, transform_func=None, norm_order=1, X=None, y=None):
+def _get_feature_importances(
+    estimator, getter, transform_func=None, norm_order=1, X=None, y=None
+):
     """
     Retrieve and aggregate (ndim > 1)  the feature importances
     from an estimator. Also optionally applies transformation.
@@ -177,7 +183,9 @@ class FeliminationRFECV(RFE):
             X_remaining_features = X[:, features]
 
             if self.verbose > 0:
-                print("Fitting estimator with %d features." % current_number_of_features)
+                print(
+                    "Fitting estimator with %d features." % current_number_of_features
+                )
 
             if effective_n_jobs(self.n_jobs) == 1:
                 parallel, func = list, _train_score_get_importance
@@ -200,8 +208,12 @@ class FeliminationRFECV(RFE):
             train_scores_per_fold = [
                 score_importance[0] for score_importance in scores_importances
             ]
-            test_scores_per_fold = [score_importance[1] for score_importance in scores_importances]
-            cv_importances = [score_importance[2] for score_importance in scores_importances]
+            test_scores_per_fold = [
+                score_importance[1] for score_importance in scores_importances
+            ]
+            cv_importances = [
+                score_importance[2] for score_importance in scores_importances
+            ]
             mean_importances = np.mean(np.vstack(cv_importances), axis=0)
             ranks = np.argsort(mean_importances)
 
@@ -211,8 +223,12 @@ class FeliminationRFECV(RFE):
             ):
                 for i, score in enumerate(test_scores_per_fold):
                     self.cv_results_[f"split{i}_{train_or_test}_score"].append(score)
-                self.cv_results_[f"mean_{train_or_test}_score"].append(np.mean(scores_per_fold))
-                self.cv_results_[f"std_{train_or_test}_score"].append(np.std(scores_per_fold))
+                self.cv_results_[f"mean_{train_or_test}_score"].append(
+                    np.mean(scores_per_fold)
+                )
+                self.cv_results_[f"std_{train_or_test}_score"].append(
+                    np.std(scores_per_fold)
+                )
             self.cv_results_["number_of_features"].append(current_number_of_features)
 
             # for sparse case ranks is matrix
