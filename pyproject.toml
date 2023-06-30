@@ -15,6 +15,7 @@ dependencies = [
 # Here you define your development dependencies
 dev = [
     "pytest",
+    "pre-commit",
 ]
 
 [build-system]
