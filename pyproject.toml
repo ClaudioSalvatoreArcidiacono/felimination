@@ -17,6 +17,7 @@ dev = [
     "black",
     "flake8-pyproject",
     "flake8",
+    "pandas",
     "pre-commit",
     "pytest",
 ]
