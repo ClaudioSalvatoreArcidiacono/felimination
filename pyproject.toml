@@ -16,6 +16,8 @@ dependencies = [
 dev = [
     "pytest",
     "pre-commit",
+    "flake8",
+    "flake8-pyproject",
 ]
 
 [build-system]
@@ -38,3 +40,6 @@ exclude = '''
   | dist
 )/
 '''
+
+[tool.flake8]
+max-line-length = 88
