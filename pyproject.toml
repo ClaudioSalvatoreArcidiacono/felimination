@@ -1,0 +1,22 @@
+[project]
+name = "felimination"
+description = ""
+version = "0.1.0"
+authors = [
+    { name = "Claudio Salvatore Arcidiacono", email = "author@email.com" }
+]
+
+# Here you define your runtime dependencies
+dependencies = [
+    "scikit-learn>=1.0.1,<2.0.0",
+]
+
+[project.optional-dependencies]
+# Here you define your development dependencies
+dev = [
+    "pytest",
+]
+
+[build-system]
+build-backend = "flit_core.buildapi"
+requires = ["flit_core >=3.2,<4"]
