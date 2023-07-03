@@ -6,6 +6,8 @@
 from felimination.rfe import PermutationImportanceRFECV
 from sklearn.linear_model import LogisticRegression
 from sklearn.datasets import make_classification
+import numpy as np
+
 
 X, y = make_classification(
     n_samples=1000,
