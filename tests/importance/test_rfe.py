@@ -137,6 +137,22 @@ def test_perm_imp_rfecv_classification_base_case_pandas(
     ).all()
 
 
+def test_float_step_param(
+    x_y_classification_with_rand_columns_pandas,
+    n_useful_features_classification,
+    random_state,
+):
+    X_with_rand, y = x_y_classification_with_rand_columns_pandas
+    selector = PermutationImportanceRFECV(
+        LogisticRegression(random_state=random_state),
+        n_features_to_select=n_useful_features_classification,
+        step=0.3,
+    )
+
+    selector.fit(X_with_rand, y)
+    assert selector.cv_results_["n_features"] == [10, 7, 5, 4, 3, 2]
+
+
 def test_perm_imp_rfecv_regression_base_case_np_arrays(
     x_y_regression_with_rand_columns_arrays,
     n_useful_features_regression,

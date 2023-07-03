@@ -9,7 +9,7 @@ from sklearn.base import BaseEstimator, clone, is_classifier
 from sklearn.feature_selection import RFE
 from sklearn.linear_model._logistic import LogisticRegression
 from sklearn.metrics import check_scoring
-from sklearn.model_selection import check_cv
+from sklearn.model_selection import check_cv, cross_validate
 from sklearn.model_selection._validation import _score
 from sklearn.utils import safe_sqr
 from sklearn.utils.metaestimators import _safe_split
@@ -176,9 +176,10 @@ class FeliminationRFECV(RFE):
 
         current_number_of_features = n_features
         self.cv_results_ = defaultdict(list)
+
         # Elimination
         while current_number_of_features > n_features_to_select:
-            # Remaining features
+            # Select remaining features
             features = np.arange(n_features)[support_]
             X_remaining_features = X[:, features]
 
@@ -187,6 +188,7 @@ class FeliminationRFECV(RFE):
                     "Fitting estimator with %d features." % current_number_of_features
                 )
 
+            # Train model, score it and get importances
             if effective_n_jobs(self.n_jobs) == 1:
                 parallel, func = list, _train_score_get_importance
             else:
@@ -221,7 +223,7 @@ class FeliminationRFECV(RFE):
             for train_or_test, scores_per_fold in zip(
                 ["train", "test"], [train_scores_per_fold, test_scores_per_fold]
             ):
-                for i, score in enumerate(test_scores_per_fold):
+                for i, score in enumerate(scores_per_fold):
                     self.cv_results_[f"split{i}_{train_or_test}_score"].append(score)
                 self.cv_results_[f"mean_{train_or_test}_score"].append(
                     np.mean(scores_per_fold)
@@ -229,7 +231,7 @@ class FeliminationRFECV(RFE):
                 self.cv_results_[f"std_{train_or_test}_score"].append(
                     np.std(scores_per_fold)
                 )
-            self.cv_results_["number_of_features"].append(current_number_of_features)
+            self.cv_results_["n_features"].append(current_number_of_features)
 
             # for sparse case ranks is matrix
             ranks = np.ravel(ranks)
@@ -239,13 +241,42 @@ class FeliminationRFECV(RFE):
             else:
                 step = int(self.step)
 
-            # Eliminate the worse features
+            # Eliminate the worst features
             threshold = min(step, current_number_of_features - n_features_to_select)
 
             support_[features[ranks][:threshold]] = False
             ranking_[np.logical_not(support_)] += 1
             current_number_of_features = np.sum(support_)
+
         # Set final attributes
+
+        # Estimate performances of final model
+        features = np.arange(n_features)[support_]
+        X_remaining_features = X[:, features]
+        cv_scores = cross_validate(
+            self.estimator,
+            X_remaining_features,
+            y,
+            groups=groups,
+            scoring=scorer,
+            cv=cv,
+            n_jobs=self.n_jobs,
+            fit_params=fit_params,
+            return_train_score=True,
+        )
+        self.cv_results_["n_features"].append(current_number_of_features)
+        # Update cv scores
+        for train_or_test in ["train", "test"]:
+            scores_per_fold = cv_scores[f"{train_or_test}_score"]
+            for i, score in enumerate(scores_per_fold):
+                self.cv_results_[f"split{i}_{train_or_test}_score"].append(score)
+            self.cv_results_[f"mean_{train_or_test}_score"].append(
+                np.mean(scores_per_fold)
+            )
+            self.cv_results_[f"std_{train_or_test}_score"].append(
+                np.std(scores_per_fold)
+            )
+
         features = np.arange(n_features)[support_]
         self.estimator_ = clone(self.estimator)
         self.estimator_.fit(X[:, features], y, **fit_params)
