@@ -19,4 +19,4 @@ jobs:
     - name: Publish Documentation to github pages
       run: |
         pip install '.[doc]'
-        mkdocs gh-deploy
+        mkdocs gh-deploy --force --clean --verbose
