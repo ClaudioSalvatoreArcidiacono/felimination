@@ -16,7 +16,7 @@ jobs:
       with:
         python-version: "3.10"
 
-    - name: Publish to TestPyPi
+    - name: Publish to Pypi
       run: |
         pip install '.[build]'
         python -m build
