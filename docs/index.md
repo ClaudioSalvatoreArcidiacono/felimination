@@ -51,7 +51,7 @@ selector.ranking_
 # array([9, 3, 8, 9, 7, 8, 5, 6, 9, 6, 8, 1, 9, 7, 8, 9, 9, 2, 4, 7])
 selector.plot()
 ```
-![example of plot](./docs/assets/example_plot.png)
+![example of plot](./assets/example_plot.png)
 
 It looks like `5` is a good number of features, we can set the number of features to select to 5 without need of retraining
 
