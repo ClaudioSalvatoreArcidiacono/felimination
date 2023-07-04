@@ -5,6 +5,13 @@ version = "0.1.0"
 authors = [
     { name = "Claudio Salvatore Arcidiacono", email = "author@email.com" }
 ]
+readme = "README.md"
+requires-python = ">=3.7"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
 
 dependencies = [
     "scikit-learn>=1.0.1,<2.0.0",
@@ -24,6 +31,10 @@ doc = [
     "mkdocs",
     "mkdocs-material",
     "mkdocstrings[python]",
+]
+build = [
+    "build",
+    "twine"
 ]
 
 [build-system]
