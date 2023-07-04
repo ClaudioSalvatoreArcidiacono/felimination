@@ -1,6 +1,6 @@
 [project]
 name = "felimination"
-description = ""
+description = "This library contains some useful scikit-learn compatible classes for feature selection."
 version = "0.1.0"
 authors = [
     { name = "Claudio Salvatore Arcidiacono", email = "author@email.com" }
@@ -29,6 +29,11 @@ doc = [
 [build-system]
 build-backend = "flit_core.buildapi"
 requires = ["flit_core >=3.2,<4"]
+
+[project.urls]
+"Homepage" = "https://github.com/ClaudioSalvatoreArcidiacono/felimination"
+"Documentation" = "https://claudiosalvatorearcidiacono.github.io/felimination/"
+"Bug Tracker" = "https://github.com/ClaudioSalvatoreArcidiacono/felimination/issues"
 
 [tool.black]
 line-length = 88
