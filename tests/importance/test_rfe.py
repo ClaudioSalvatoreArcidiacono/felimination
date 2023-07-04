@@ -1,9 +1,13 @@
-from felimination.rfe import PermutationImportanceRFECV
-import pytest
-from sklearn.linear_model import LogisticRegression, LinearRegression
-from sklearn.datasets import make_classification, make_friedman1
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
+import pytest
+from matplotlib.testing.compare import compare_images
+from sklearn.datasets import make_classification, make_friedman1
+from sklearn.linear_model import LinearRegression, LogisticRegression
+from sklearn.model_selection import ShuffleSplit
+from felimination.rfe import PermutationImportanceRFECV
 
 
 @pytest.fixture(scope="session")
@@ -29,9 +33,15 @@ def sample_size():
 
 
 @pytest.fixture(scope="session")
+def cv(random_state):
+    return ShuffleSplit(random_state=random_state)
+
+
+@pytest.fixture(scope="session")
 def x_y_classification_with_rand_columns_arrays(
     n_useful_features_classification, n_random_features, sample_size, random_state
 ):
+    np.random.seed(random_state)
     X, y = make_classification(
         n_samples=sample_size,
         n_features=n_useful_features_classification,
@@ -95,11 +105,13 @@ def test_perm_imp_rfecv_classification_base_case_np_arrays(
     x_y_classification_with_rand_columns_arrays,
     n_useful_features_classification,
     n_random_features,
+    cv,
     random_state,
 ):
     X_with_rand, y = x_y_classification_with_rand_columns_arrays
     selector = PermutationImportanceRFECV(
         LogisticRegression(random_state=random_state),
+        cv=cv,
         n_features_to_select=n_useful_features_classification,
     )
 
@@ -118,11 +130,13 @@ def test_perm_imp_rfecv_classification_base_case_pandas(
     x_y_classification_with_rand_columns_pandas,
     n_useful_features_classification,
     n_random_features,
+    cv,
     random_state,
 ):
     X_with_rand, y = x_y_classification_with_rand_columns_pandas
     selector = PermutationImportanceRFECV(
         LogisticRegression(random_state=random_state),
+        cv=cv,
         n_features_to_select=n_useful_features_classification,
     )
 
@@ -140,11 +154,13 @@ def test_perm_imp_rfecv_classification_base_case_pandas(
 def test_float_step_param(
     x_y_classification_with_rand_columns_pandas,
     n_useful_features_classification,
+    cv,
     random_state,
 ):
     X_with_rand, y = x_y_classification_with_rand_columns_pandas
     selector = PermutationImportanceRFECV(
         LogisticRegression(random_state=random_state),
+        cv=cv,
         n_features_to_select=n_useful_features_classification,
         step=0.3,
     )
@@ -157,10 +173,11 @@ def test_perm_imp_rfecv_regression_base_case_np_arrays(
     x_y_regression_with_rand_columns_arrays,
     n_useful_features_regression,
     n_random_features,
+    cv,
 ):
     X_with_rand, y = x_y_regression_with_rand_columns_arrays
     selector = PermutationImportanceRFECV(
-        LinearRegression(), n_features_to_select=n_useful_features_regression
+        LinearRegression(), cv=cv, n_features_to_select=n_useful_features_regression
     )
 
     selector.fit(X_with_rand, y)
@@ -178,10 +195,11 @@ def test_perm_imp_rfecv_regression_base_case_pandas(
     x_y_regression_with_rand_columns_pandas,
     n_useful_features_regression,
     n_random_features,
+    cv,
 ):
     X_with_rand, y = x_y_regression_with_rand_columns_pandas
     selector = PermutationImportanceRFECV(
-        LinearRegression(), n_features_to_select=n_useful_features_regression
+        LinearRegression(), cv=cv, n_features_to_select=n_useful_features_regression
     )
 
     selector.fit(X_with_rand, y)
@@ -193,3 +211,34 @@ def test_perm_imp_rfecv_regression_base_case_pandas(
         selector.support_
         == [True] * n_useful_features_regression + [False] * n_random_features
     ).all()
+
+
+def test_rfecv_plotting(
+    x_y_classification_with_rand_columns_pandas,
+    cv,
+    n_useful_features_classification,
+    random_state,
+    request,
+):
+    expected_image = (
+        Path(request.fspath.dirname)
+        / "baseline_images"
+        / "test_rfecv_plotting-expected.png"
+    )
+    actual_image = (
+        Path(request.fspath.dirname) / "baseline_images" / "test_rfecv_plotting.png"
+    )
+
+    X_with_rand, y = x_y_classification_with_rand_columns_pandas
+    selector = PermutationImportanceRFECV(
+        LogisticRegression(random_state=random_state),
+        cv=cv,
+        n_features_to_select=n_useful_features_classification,
+        random_state=random_state,
+    )
+
+    selector.fit(X_with_rand, y)
+    selector.plot().get_figure().savefig(actual_image)
+    comparison_outcome = compare_images(expected_image, actual_image, tol=0.01)
+    assert comparison_outcome is None, comparison_outcome
+    actual_image.unlink()

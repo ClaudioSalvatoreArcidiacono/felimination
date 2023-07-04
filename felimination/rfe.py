@@ -4,6 +4,8 @@ from numbers import Integral
 from operator import attrgetter
 
 import numpy as np
+import pandas as pd
+import seaborn as sns
 from joblib import effective_n_jobs
 from sklearn.base import BaseEstimator, clone, is_classifier
 from sklearn.feature_selection import RFE
@@ -14,6 +16,7 @@ from sklearn.model_selection._validation import _score
 from sklearn.utils import safe_sqr
 from sklearn.utils.metaestimators import _safe_split
 from sklearn.utils.parallel import Parallel, delayed
+from sklearn.utils.validation import check_is_fitted
 
 from felimination.importance import PermutationImportance
 
@@ -128,6 +131,7 @@ class FeliminationRFECV(RFE):
         n_features_to_select=1,
         cv=None,
         scoring=None,
+        random_state=None,
         verbose=0,
         n_jobs=None,
         importance_getter="auto",
@@ -135,6 +139,7 @@ class FeliminationRFECV(RFE):
         self.cv = cv
         self.scoring = scoring
         self.n_jobs = n_jobs
+        self.random_state = random_state
         super().__init__(
             estimator,
             n_features_to_select=n_features_to_select,
@@ -287,6 +292,46 @@ class FeliminationRFECV(RFE):
         self.cv_results_ = dict(self.cv_results_)
         return self
 
+    def set_n_features_to_select(self, n_features_to_select):
+        check_is_fitted(self)
+        if n_features_to_select not in self.cv_results_["n_features"]:
+            raise ValueError(
+                f"This selector has not been fitted up with {n_features_to_select}, "
+                f"please select a value in {set(self.cv_results_['n_features'])} or "
+                "refit the selector changing the step parameter of the n_features_to_select"
+            )
+        support_ = np.zeros_like(self.support_, dtype=bool)
+        support_[np.argsort(self.ranking_)[:n_features_to_select]] = True
+        self.support_ = support_
+        return self
+
+    def plot(self):
+        check_is_fitted(self)
+        df = pd.DataFrame(self.cv_results_)
+        split_score_cols = [col for col in df if "split" in col]
+        df_long_form = df[split_score_cols + ["n_features"]].melt(
+            id_vars=["n_features"],
+            value_vars=split_score_cols,
+            var_name="split",
+            value_name="score",
+        )
+        df_long_form["set"] = np.where(
+            df_long_form["split"].str.contains("train"), "train", "validation"
+        )
+        ax = sns.lineplot(
+            data=df_long_form,
+            x="n_features",
+            y="score",
+            hue="set",
+            markers=True,
+            style="set",
+            hue_order=["validation", "train"],
+            style_order=["validation", "train"],
+            seed=self.random_state,
+        )
+        ax.set_xticks(df.n_features)
+        return ax
+
 
 class PermutationImportanceRFECV(FeliminationRFECV):
     def __init__(
@@ -313,13 +358,15 @@ class PermutationImportanceRFECV(FeliminationRFECV):
             step=step,
             n_features_to_select=n_features_to_select,
             cv=cv,
+            random_state=random_state,
             scoring=scoring,
             verbose=verbose,
             n_jobs=n_jobs,
             importance_getter=PermutationImportance(
                 scoring=scoring,
                 n_repeats=n_repeats,
-                n_jobs=n_jobs,
+                # Better not to do double parallelization
+                n_jobs=1,
                 random_state=random_state,
                 sample_weight=sample_weight,
                 max_samples=max_samples,
