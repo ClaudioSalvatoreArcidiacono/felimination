@@ -7,6 +7,7 @@ from matplotlib.testing.compare import compare_images
 from sklearn.datasets import make_classification, make_friedman1
 from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.model_selection import ShuffleSplit
+from sklearn.exceptions import NotFittedError
 from felimination.rfe import PermutationImportanceRFECV
 
 
@@ -242,3 +243,68 @@ def test_rfecv_plotting(
     comparison_outcome = compare_images(expected_image, actual_image, tol=0.01)
     assert comparison_outcome is None, comparison_outcome
     actual_image.unlink()
+
+
+def test_rfecv_plotting_exception_raise(
+    random_state,
+):
+    selector = PermutationImportanceRFECV(
+        LogisticRegression(random_state=random_state),
+        random_state=random_state,
+    )
+
+    with pytest.raises(NotFittedError):
+        selector.plot()
+
+
+def test_rfecv_set_n_features_to_select_base_case(
+    x_y_classification_with_rand_columns_pandas,
+    n_useful_features_classification,
+    n_random_features,
+    cv,
+    random_state,
+):
+    X_with_rand, y = x_y_classification_with_rand_columns_pandas
+    selector = PermutationImportanceRFECV(
+        LogisticRegression(random_state=random_state),
+        cv=cv,
+        n_features_to_select=1,
+    )
+    selector.set_output(transform="pandas")
+    selector.fit(X_with_rand, y)
+    selector.set_n_features_to_select(n_useful_features_classification)
+    assert (
+        selector.support_
+        == [True] * n_useful_features_classification + [False] * n_random_features
+    ).all()
+    columns_to_select = X_with_rand.columns[:n_useful_features_classification]
+    assert (selector.get_feature_names_out() == columns_to_select).all()
+    pd.testing.assert_frame_equal(
+        selector.transform(X_with_rand), X_with_rand[columns_to_select]
+    )
+
+
+def test_rfecv_set_n_features_to_select_exception_cases(
+    random_state,
+    n_useful_features_classification,
+    cv,
+    x_y_classification_with_rand_columns_pandas,
+):
+    X_with_rand, y = x_y_classification_with_rand_columns_pandas
+    selector = PermutationImportanceRFECV(
+        LogisticRegression(random_state=random_state),
+        cv=cv,
+        n_features_to_select=n_useful_features_classification,
+    )
+    selector.set_output(transform="pandas")
+
+    with pytest.raises(NotFittedError):
+        selector.set_n_features_to_select(n_useful_features_classification)
+
+    selector.fit(X_with_rand, y)
+
+    with pytest.raises(ValueError):
+        selector.set_n_features_to_select(n_useful_features_classification - 1)
+
+    with pytest.raises(ValueError):
+        selector.set_n_features_to_select(X_with_rand.shape[0] + 1)
