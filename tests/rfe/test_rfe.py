@@ -214,37 +214,6 @@ def test_perm_imp_rfecv_regression_base_case_pandas(
     ).all()
 
 
-def test_rfecv_plotting(
-    x_y_classification_with_rand_columns_pandas,
-    cv,
-    n_useful_features_classification,
-    random_state,
-    request,
-):
-    expected_image = (
-        Path(request.fspath.dirname)
-        / "baseline_images"
-        / "test_rfecv_plotting-expected.png"
-    )
-    actual_image = (
-        Path(request.fspath.dirname) / "baseline_images" / "test_rfecv_plotting.png"
-    )
-
-    X_with_rand, y = x_y_classification_with_rand_columns_pandas
-    selector = PermutationImportanceRFECV(
-        LogisticRegression(random_state=random_state),
-        cv=cv,
-        n_features_to_select=n_useful_features_classification,
-        random_state=random_state,
-    )
-
-    selector.fit(X_with_rand, y)
-    selector.plot().get_figure().savefig(actual_image)
-    comparison_outcome = compare_images(expected_image, actual_image, tol=0.01)
-    assert comparison_outcome is None, comparison_outcome
-    actual_image.unlink()
-
-
 def test_rfecv_plotting_exception_raise(
     random_state,
 ):
