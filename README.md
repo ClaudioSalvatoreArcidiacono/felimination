@@ -1,3 +1,7 @@
+[![pytest](https://github.com/ClaudioSalvatoreArcidiacono/felimination/workflows/Tests/badge.svg)](https://github.com/ClaudioSalvatoreArcidiacono/felimination/actions?query=workflow%3A%22Tests%22)
+[![PyPI](https://img.shields.io/pypi/v/felimination)](#)
+
+
 # felimination
 
 This library contains some useful scikit-learn compatible classes for feature selection.
