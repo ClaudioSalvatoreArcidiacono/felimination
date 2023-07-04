@@ -1,7 +1,8 @@
 [project]
 name = "felimination"
 description = "This library contains some useful scikit-learn compatible classes for feature selection."
-version = "0.1.0"
+version = "0.1.2"
+keywords = ["feature selection", "scikit-learn", "machine learning"]
 authors = [
     { name = "Claudio Salvatore Arcidiacono", email = "author@email.com" }
 ]
