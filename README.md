@@ -61,7 +61,7 @@ selector.ranking_
 
 selector.plot()
 ```
-![example of plot](./assets/example_plot.png)
+![example of plot](./docs/assets/example_plot.png)
 
 It looks like `3` is a good number of features, we can set the number of features to select to 3 without need of retraining
 
