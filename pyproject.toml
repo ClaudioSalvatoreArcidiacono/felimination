@@ -20,6 +20,11 @@ dev = [
     "pre-commit",
     "pytest",
 ]
+doc = [
+    "mkdocs",
+    "mkdocs-material",
+    "mkdocstrings[python]",
+]
 
 [build-system]
 build-backend = "flit_core.buildapi"
