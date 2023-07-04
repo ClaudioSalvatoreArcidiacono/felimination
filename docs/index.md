@@ -23,7 +23,6 @@ pip install felimination
 ## Usage
 
 ```python
-
 from felimination.rfe import PermutationImportanceRFECV
 from sklearn.linear_model import LogisticRegression
 from sklearn.datasets import make_classification
@@ -39,37 +38,29 @@ X, y = make_classification(
     random_state=42,
 )
 
-# Add random features at the end, so the first 2 features are
-# relevant and the remaining 8 features are random
-X_with_rand = np.hstack((X, np.random.random(size=(X.shape[0], 8))))
-
 selector = PermutationImportanceRFECV(LogisticRegression(), step=0.3)
 
-selector.fit(X_with_rand, y)
+selector.fit(X, y)
 
 selector.support_
 # array([False, False, False, False, False, False, False, False, False,
-#        False, False, False, False, True, False, False, False, False,
-#        False, False, False, False, False, False, False, False, False,
-#        False])
+#        False, False,  True, False, False, False, False, False, False,
+#        False, False])
 
 selector.ranking_
-# array([10,  3,  9, 10,  8,  9,  7,  7, 10,  6,  8,  2,  8,  1,  9, 10, 10,
-#         4,  5,  6,  9, 10,  9,  8, 10,  9,  7, 10])
-
+# array([9, 3, 8, 9, 7, 8, 5, 6, 9, 6, 8, 1, 9, 7, 8, 9, 9, 2, 4, 7])
 selector.plot()
 ```
-![example of plot](./assets/example_plot.png)
+![example of plot](./docs/assets/example_plot.png)
 
-It looks like `3` is a good number of features, we can set the number of features to select to 3 without need of retraining
+It looks like `5` is a good number of features, we can set the number of features to select to 5 without need of retraining
 
 ```python
-selector.set_n_features_to_select(3)
+selector.set_n_features_to_select(5)
 selector.support_
-# array([False,  True, False, False, False, False, False, False, False,
-#        False, False,  True, False,  True, False, False, False, False,
-#        False, False, False, False, False, False, False, False, False,
-#        False])
+# array([False,  True, False, False, False, False,  True, False, False,
+#        False, False,  True, False, False, False, False, False,  True,
+#         True, False])
 ```
 
 ## License
