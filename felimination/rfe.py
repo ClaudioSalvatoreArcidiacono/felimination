@@ -25,8 +25,44 @@ def _train_score_get_importance(
     estimator, X, y, train, test, scorer, importance_getter
 ):
     """
-    Return the score for a fit across one fold.
+    Train and test an estimator and get the feature importances.
+
+    Parameters
+    ----------
+    estimator : estimator
+        A scikit-learn estimator to train score and to calculate importance on.
+
+    X : {array-like, sparse matrix} of shape (n_samples, n_features)
+        The feature samples to use to train and test the estimator.
+
+    y : array-like of shape (n_samples,)
+        The target values to use to train and test the estimator.
+
+    train : array-like of shape (n_train_samples,)
+        The indices of the training samples.
+
+    test : array like of shape (n_test_samples,)
+        The indices of the test samples.
+
+    scorer : callable
+        The scorer to use to score the estimator.
+
+    importance_getter : "auto", str or callable
+        An attribute or a callable to get the feature importance. If `"auto "`,
+        `estimator` is expected to expose `coef_` or `feature_importances_`.
+
+    Returns
+    -------
+    train_score : float
+        The score of the estimator on the training set.
+
+    test_score : float
+        The score of the estimator on the test set.
+
+    importances : ndarray of shape (n_features,)
+        The features importances.
     """
+
     estimator = clone(estimator)
     X_train, y_train = _safe_split(estimator, X, y, train)
     X_test, y_test = _safe_split(estimator, X, y, test, train)
@@ -52,12 +88,6 @@ def _get_feature_importances(
         A scikit-learn estimator from which we want to get the feature
         importances.
 
-    X : {array-like, sparse matrix} of shape (n_samples, n_features), default=None
-        The training input samples.
-
-    y : array-like of shape (n_samples,), default=None
-        The target values.
-
     getter : "auto", str or callable
         An attribute or a callable to get the feature importance. If `"auto"`,
         `estimator` is expected to expose `coef_` or `feature_importances`.
@@ -69,6 +99,12 @@ def _get_feature_importances(
     norm_order : int, default=1
         The norm order to apply when `transform_func="norm"`. Only applied
         when `importances.ndim > 1`.
+
+    X : {array-like, sparse matrix} of shape (n_samples, n_features), default=None
+        The feature samples to use to compute feature importance.
+
+    y : array-like of shape (n_samples,), default=None
+        The target values to use to compute feature importance.
 
     Returns
     -------
@@ -123,6 +159,187 @@ def _get_feature_importances(
 
 
 class FeliminationRFECV(RFE):
+    """Perform recursive feature elimination with cross-validation
+    following scikit-learn standards.
+
+    It has the following differences with RFECV from scikit-learn:
+    - It supports an `importance_getter` function that also uses a validation
+      set to compute the feature importances. This allows to use importance measures
+      like permutation importance or shap.
+    - Instead of using Cross Validation to select the number of features, it
+      uses cross validation to get a more accurate estimate of the feature
+      importances. This means that the number of features to select has to be
+      set during initialization, similarly to RFE.
+    - When `step` is a float value it is removes a percentage of the number
+      of **remaining** features, not total like in RFE/RFECV. This allows to
+      drop big chunks of feature at the beginning of the RFE process and to slow
+      down towards the end of the process.
+    - Has a plotting function
+    - Adds information about the number of features selected at each step in the
+      attribute `cv_results_`
+    - Allows to change the number of features to be selected after fitting.
+
+    Rater than that, it is a copy-paste of RFE, so credit goes to scikit-learn.
+
+    The algorithm of feature selection goes as follows:
+    ```
+    while n_features > n_features_to_select:
+        - The estimator is trained on the selected features and the score is
+          computed using cross validation.
+        - feature importance is computed for each validation fold on the validation
+          set and then averaged.
+        - The least important features are pruned.
+        - The pruned features are removed from the dataset.
+    ```
+
+    Parameters
+    ----------
+    estimator : ``Estimator`` instance
+        A supervised learning estimator with a ``fit`` method that provides
+        information about feature importance either through a ``coef_``
+        attribute or through a ``feature_importances_`` attribute.
+
+    step : int or float, default=1
+        If greater than or equal to 1, then ``step`` corresponds to the
+        (integer) number of features to remove at each iteration.
+        If within (0.0, 1.0), then ``step`` corresponds to the percentage
+        (rounded down) of **remaining** features to remove at each iteration.
+        Note that the last iteration may remove fewer than ``step`` features in
+        order to reach ``min_features_to_select``.
+
+    n_features_to_select : int or float, default=None
+        The number of features to select. If `None`, half of the features are
+        selected. If integer, the parameter is the absolute number of features
+        to select. If float between 0 and 1, it is the fraction of the features to
+        select.
+
+    cv : int, cross-validation generator or an iterable, default=None
+        Determines the cross-validation splitting strategy.
+        Possible inputs for cv are:
+
+        - None, to use the default 5-fold cross-validation,
+        - integer, to specify the number of folds.
+        - :term:`CV splitter`,
+        - An iterable yielding (train, test) splits as arrays of indices.
+
+        For integer/None inputs, if ``y`` is binary or multiclass,
+        :class:`~sklearn.model_selection.StratifiedKFold` is used. If the
+        estimator is a classifier or if ``y`` is neither binary nor multiclass,
+        :class:`~sklearn.model_selection.KFold` is used.
+
+        Refer :ref:`User Guide <cross_validation>` for the various
+        cross-validation strategies that can be used here.
+
+        .. versionchanged:: 0.22
+            ``cv`` default value of None changed from 3-fold to 5-fold.
+
+    scoring : str, callable or None, default=None
+        A string (see model evaluation documentation) or
+        a scorer callable object / function with signature
+        ``scorer(estimator, X, y)``.
+
+    verbose : int, default=0
+        Controls verbosity of output.
+
+    n_jobs : int or None, default=None
+        Number of cores to run in parallel while fitting across folds.
+        ``None`` means 1 unless in a :obj:`joblib.parallel_backend` context.
+        ``-1`` means using all processors.
+
+
+    importance_getter : str or callable, default='auto'
+        If 'auto', uses the feature importance either through a `coef_`
+        or `feature_importances_` attributes of estimator.
+
+        Also accepts a string that specifies an attribute name/path
+        for extracting feature importance.
+        For example, give `regressor_.coef_` in case of
+        :class:`~sklearn.compose.TransformedTargetRegressor`  or
+        `named_steps.clf.feature_importances_` in case of
+        :class:`~sklearn.pipeline.Pipeline` with its last step named `clf`.
+
+        If `callable`, overrides the default feature importance getter.
+        The callable is passed with the fitted estimator and the validation set
+        (X_val, y_val, estimator) and it should return importance for each feature.
+
+
+    Attributes
+    ----------
+    classes_ : ndarray of shape (n_classes,)
+        The classes labels. Only available when `estimator` is a classifier.
+
+    estimator_ : ``Estimator`` instance
+        The fitted estimator used to select features.
+
+    cv_results_ : dict of ndarrays
+        A dict with keys:
+
+        n_features : ndarray of shape (n_subsets_of_features,)
+            The number of features used at that step.
+
+        split(k)_test_score : ndarray of shape (n_subsets_of_features,)
+            The cross-validation scores across (k)th fold.
+
+        mean_test_score : ndarray of shape (n_subsets_of_features,)
+            Mean of scores over the folds.
+
+        std_test_score : ndarray of shape (n_subsets_of_features,)
+            Standard deviation of scores over the folds.
+
+        split(k)_train_score : ndarray of shape (n_subsets_of_features,)
+            The cross-validation scores across (k)th fold.
+
+        mean_train_score : ndarray of shape (n_subsets_of_features,)
+            Mean of scores over the folds.
+
+        std_train_score : ndarray of shape (n_subsets_of_features,)
+            Standard deviation of scores over the folds.
+
+    n_features_ : int
+        The number of selected features.
+
+    n_features_in_ : int
+        Number of features seen during :term:`fit`. Only defined if the
+        underlying estimator exposes such an attribute when fit.
+
+    feature_names_in_ : ndarray of shape (`n_features_in_`,)
+        Names of features seen during :term:`fit`. Defined only when `X`
+        has feature names that are all strings.
+
+    ranking_ : ndarray of shape (n_features,)
+        The feature ranking, such that ``ranking_[i]`` corresponds to the
+        ranking position of the i-th feature. Selected (i.e., estimated
+        best) features are assigned rank 1.
+
+    support_ : ndarray of shape (n_features,)
+        The mask of selected features.
+
+    Examples
+    --------
+    The following example shows how to retrieve the 5 most informative
+    features in the Friedman #1 dataset.
+
+    >>> from felimination.rfe import FeliminationRFECV
+    >>> from felimination.importance import PermutationImportance
+    >>> from sklearn.datasets import make_friedman1
+    >>> from sklearn.svm import SVR
+    >>> X, y = make_friedman1(n_samples=50, n_features=10, random_state=0)
+    >>> estimator = SVR(kernel="linear")
+    >>> selector = selector = FeliminationRFECV(
+        estimator,
+        step=1,
+        cv=5,
+        n_features_to_select=5,
+        importance_getter=PermutationImportance()
+    )
+    >>> selector = selector.fit(X, y)
+    >>> selector.support_
+    array([ True,  True,  True,  True,  True, False, False, False, False,
+           False])
+    >>> selector.ranking_
+    array([1, 1, 1, 1, 1, 6, 3, 4, 2, 5])
+    """
+
     def __init__(
         self,
         estimator: BaseEstimator | LogisticRegression,
@@ -149,10 +366,25 @@ class FeliminationRFECV(RFE):
         )
 
     def fit(self, X, y, groups=None, **fit_params):
-        # Parameter step_score controls the calculation of self.scores_
-        # step_score is not exposed to users
-        # and is used when implementing RFECV
-        # self.scores_ will not be calculated when calling _fit through fit
+        """Fit the RFE model and then the underlying estimator on the selected features.
+
+        Parameters
+        ----------
+        X : {array-like, sparse matrix} of shape (n_samples, n_features)
+            The training input samples.
+
+        y : array-like of shape (n_samples,)
+            The target values.
+
+        **fit_params : dict
+            Additional parameters passed to the `fit` method of the underlying
+            estimator.
+
+        Returns
+        -------
+        self : object
+            Fitted estimator.
+        """
         self._validate_params()
         tags = self._get_tags()
         X, y = self._validate_data(
@@ -293,6 +525,29 @@ class FeliminationRFECV(RFE):
         return self
 
     def set_n_features_to_select(self, n_features_to_select):
+        """Changes the number of features to select after fitting.
+
+        The underlying estimator **will not be retrained**. So this method will not
+        alter the behavior of predict/predict_proba but it will change the behavior
+        of transform and get_feature_names_out.
+
+        Parameters
+        ----------
+        n_features_to_select : int
+            The number of features to select. Must be a value among
+            `cv_results_["n_features"]`
+
+        Returns
+        -------
+        self : object
+            Fitted estimator.
+
+        Raises
+        ------
+        ValueError
+            When the number of features to select has not been tried during the
+            feature selection procedure.
+        """
         check_is_fitted(self)
         if n_features_to_select not in self.cv_results_["n_features"]:
             raise ValueError(
@@ -305,7 +560,21 @@ class FeliminationRFECV(RFE):
         self.support_ = support_
         return self
 
-    def plot(self):
+    def plot(self, **kwargs):
+        """Plot a feature selection plot with number of features
+
+        Arguments
+        ---------
+        **kwargs : dict
+            Additional parameters passed to seaborn.lineplot. For a list
+            of possible options, please visit https://seaborn.pydata.org/generated/\
+            seaborn.lineplot.html
+
+        Returns
+        -------
+        matplotlib.axes.Axes
+            The axis where the plot has been plotted.
+        """
         check_is_fitted(self)
         df = pd.DataFrame(self.cv_results_)
         split_score_cols = [col for col in df if "split" in col]
@@ -318,8 +587,7 @@ class FeliminationRFECV(RFE):
         df_long_form["set"] = np.where(
             df_long_form["split"].str.contains("train"), "train", "validation"
         )
-        ax = sns.lineplot(
-            data=df_long_form,
+        lineplot_kwargs = dict(
             x="n_features",
             y="score",
             hue="set",
@@ -329,11 +597,202 @@ class FeliminationRFECV(RFE):
             style_order=["validation", "train"],
             seed=self.random_state,
         )
+        lineplot_kwargs.update(**kwargs)
+        ax = sns.lineplot(data=df_long_form, **lineplot_kwargs)
         ax.set_xticks(df.n_features)
         return ax
 
 
 class PermutationImportanceRFECV(FeliminationRFECV):
+    """Preset of FeliminationRFECV using permutation importance as importance getter.
+
+    It has the following differences with RFECV from scikit-learn:
+    - It supports an `importance_getter` function that also uses a validation
+      set to compute the feature importances. This allows to use importance measures
+      like permutation importance or shap.
+    - Instead of using Cross Validation to select the number of features, it
+      uses cross validation to get a more accurate estimate of the feature
+      importances. This means that the number of features to select has to be
+      set during initialization, similarly to RFE.
+    - When `step` is a float value it is removes a percentage of the number
+      of **remaining** features, not total like in RFE/RFECV. This allows to
+      drop big chunks of feature at the beginning of the RFE process and to slow
+      down towards the end of the process.
+    - Has a plotting function
+    - Adds information about the number of features selected at each step in the
+      attribute `cv_results_`
+    - Allows to change the number of features to be selected after fitting.
+
+    Rater than that, it is a copy-paste of RFE, so credit goes to scikit-learn.
+
+    The algorithm of feature selection goes as follows:
+    ```
+    while n_features > n_features_to_select:
+        - The estimator is trained on the selected features and the score is
+          computed using cross validation.
+        - feature importance is computed for each validation fold on the validation
+          set and then averaged.
+        - The least important features are pruned.
+        - The pruned features are removed from the dataset.
+    ```
+
+    Parameters
+    ----------
+    estimator : ``Estimator`` instance
+        A supervised learning estimator with a ``fit`` method that provides
+        information about feature importance either through a ``coef_``
+        attribute or through a ``feature_importances_`` attribute.
+
+    step : int or float, default=1
+        If greater than or equal to 1, then ``step`` corresponds to the
+        (integer) number of features to remove at each iteration.
+        If within (0.0, 1.0), then ``step`` corresponds to the percentage
+        (rounded down) of **remaining** features to remove at each iteration.
+        Note that the last iteration may remove fewer than ``step`` features in
+        order to reach ``min_features_to_select``.
+
+    n_features_to_select : int or float, default=None
+        The number of features to select. If `None`, half of the features are
+        selected. If integer, the parameter is the absolute number of features
+        to select. If float between 0 and 1, it is the fraction of the features to
+        select.
+
+    cv : int, cross-validation generator or an iterable, default=None
+        Determines the cross-validation splitting strategy.
+        Possible inputs for cv are:
+
+        - None, to use the default 5-fold cross-validation,
+        - integer, to specify the number of folds.
+        - :term:`CV splitter`,
+        - An iterable yielding (train, test) splits as arrays of indices.
+
+        For integer/None inputs, if ``y`` is binary or multiclass,
+        :class:`~sklearn.model_selection.StratifiedKFold` is used. If the
+        estimator is a classifier or if ``y`` is neither binary nor multiclass,
+        :class:`~sklearn.model_selection.KFold` is used.
+
+        Refer :ref:`User Guide <cross_validation>` for the various
+        cross-validation strategies that can be used here.
+
+        .. versionchanged:: 0.22
+            ``cv`` default value of None changed from 3-fold to 5-fold.
+
+    scoring : str, callable or None, default=None
+        A string (see model evaluation documentation) or
+        a scorer callable object / function with signature
+        ``scorer(estimator, X, y)``.
+
+    verbose : int, default=0
+        Controls verbosity of output.
+
+    n_jobs : int or None, default=None
+        Number of cores to run in parallel while fitting across folds.
+        ``None`` means 1 unless in a :obj:`joblib.parallel_backend` context.
+        ``-1`` means using all processors.
+
+    n_repeats : int, default=5
+        Number of times to permute a feature.
+
+    random_state : int, RandomState instance, default=None
+        Pseudo-random number generator to control the permutations of each
+        feature.
+        Pass an int to get reproducible results across function calls.
+
+    sample_weight : array-like of shape (n_samples,), default=None
+        Sample weights used in scoring.
+
+    max_samples : int or float, default=1.0
+        The number of samples to draw from X to compute feature importance
+        in each repeat (without replacement).
+
+        - If int, then draw `max_samples` samples.
+        - If float, then draw `max_samples * X.shape[0]` samples.
+        - If `max_samples` is equal to `1.0` or `X.shape[0]`, all samples
+        will be used.
+
+        While using this option may provide less accurate importance estimates,
+        it keeps the method tractable when evaluating feature importance on
+        large datasets. In combination with `n_repeats`, this allows to control
+        the computational speed vs statistical accuracy trade-off of this method.
+
+
+    Attributes
+    ----------
+    classes_ : ndarray of shape (n_classes,)
+        The classes labels. Only available when `estimator` is a classifier.
+
+    estimator_ : ``Estimator`` instance
+        The fitted estimator used to select features.
+
+    cv_results_ : dict of ndarrays
+        A dict with keys:
+
+        n_features : ndarray of shape (n_subsets_of_features,)
+            The number of features used at that step.
+
+        split(k)_test_score : ndarray of shape (n_subsets_of_features,)
+            The cross-validation scores across (k)th fold.
+
+        mean_test_score : ndarray of shape (n_subsets_of_features,)
+            Mean of scores over the folds.
+
+        std_test_score : ndarray of shape (n_subsets_of_features,)
+            Standard deviation of scores over the folds.
+
+        split(k)_train_score : ndarray of shape (n_subsets_of_features,)
+            The cross-validation scores across (k)th fold.
+
+        mean_train_score : ndarray of shape (n_subsets_of_features,)
+            Mean of scores over the folds.
+
+        std_train_score : ndarray of shape (n_subsets_of_features,)
+            Standard deviation of scores over the folds.
+
+    n_features_ : int
+        The number of selected features.
+
+    n_features_in_ : int
+        Number of features seen during :term:`fit`. Only defined if the
+        underlying estimator exposes such an attribute when fit.
+
+    feature_names_in_ : ndarray of shape (`n_features_in_`,)
+        Names of features seen during :term:`fit`. Defined only when `X`
+        has feature names that are all strings.
+
+    ranking_ : ndarray of shape (n_features,)
+        The feature ranking, such that ``ranking_[i]`` corresponds to the
+        ranking position of the i-th feature. Selected (i.e., estimated
+        best) features are assigned rank 1.
+
+    support_ : ndarray of shape (n_features,)
+        The mask of selected features.
+
+    Examples
+    --------
+    The following example shows how to retrieve the 5 most informative
+    features in the Friedman #1 dataset.
+
+    >>> from felimination.rfe import FeliminationRFECV
+    >>> from felimination.importance import PermutationImportance
+    >>> from sklearn.datasets import make_friedman1
+    >>> from sklearn.svm import SVR
+    >>> X, y = make_friedman1(n_samples=50, n_features=10, random_state=0)
+    >>> estimator = SVR(kernel="linear")
+    >>> selector = selector = FeliminationRFECV(
+        estimator,
+        step=1,
+        cv=5,
+        n_features_to_select=5,
+        importance_getter=PermutationImportance()
+    )
+    >>> selector = selector.fit(X, y)
+    >>> selector.support_
+    array([ True,  True,  True,  True,  True, False, False, False, False,
+           False])
+    >>> selector.ranking_
+    array([1, 1, 1, 1, 1, 6, 3, 4, 2, 5])
+    """
+
     def __init__(
         self,
         estimator: BaseEstimator | LogisticRegression,
