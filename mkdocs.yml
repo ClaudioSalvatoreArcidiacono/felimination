@@ -29,6 +29,8 @@ plugins:
       python:
         options:
           docstring_style: numpy
+        import:
+        - https://scikit-learn.org/stable/objects.inv
 
 markdown_extensions:
   - pymdownx.highlight:

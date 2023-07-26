@@ -1,4 +1,31 @@
-"""Module with tools to perform drift-based feature selection.
+"""The idea behind this module comes from the conjunction of two concepts:
+
+- [1] [Classifier Two-Sample Test](https://arxiv.org/abs/1610.06545)
+- [2] [Recursive Feature Elimination](\
+    https://scikit-learn.org/stable/modules/generated/\
+    sklearn.feature_selection.RFE.html)
+
+In [1] classifier performances are used to determine how similar two samples are. More
+specifically, imagine to have two samples: `reference` and `test`. In order to assess
+whether `reference` and `test` have been drawn from the same distribution, we could
+train a classifier in classifying which instances belong to which sample. If the
+model easily distinguishes instances from the two samples, then the two samples
+have been probably drawn from two different distributions. Conversely, if the
+classifier struggles to distinguish them, then it is likely that the samples have
+been drawn from the same distribution.
+
+In the context of drift detection, the classifier two-sample test can be used to
+assess whether drift has happened between the reference and the test set and to
+which degree.
+
+The classes of this module take this idea one step further and attempt
+to reduce the drift using recursive feature selection. After a classifier
+is trained to distinguish between `reference` and `test`, the feature
+importance of the classifier is used to determine which features contribute
+the most in distinguishing between the two sets. The most important features
+are then eliminated and the procedure is repeated until the classifier is not
+able anymore to distinguish between the two samples, or until a certain amount
+of features has been removed.
 
 This module contains the following classes:
 - `SampleSimilarityDriftRFE`: base class for drift-based sample similarity
