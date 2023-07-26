@@ -425,6 +425,20 @@ class FeliminationRFECV(RFE):
             mean_importances = np.mean(np.vstack(cv_importances), axis=0)
             ranks = np.argsort(mean_importances)
 
+            # for sparse case ranks is matrix
+            ranks = np.ravel(ranks)
+
+            if 0.0 < self.step < 1.0:
+                step = int(max(1, self.step * current_number_of_features))
+            else:
+                step = int(self.step)
+
+            # Eliminate the worst features
+            threshold = min(step, current_number_of_features - n_features_to_select)
+
+            support_[features[ranks][:threshold]] = False
+            ranking_[np.logical_not(support_)] += 1
+
             # Update cv scores
             for train_or_test, scores_per_fold in zip(
                 ["train", "test"], [train_scores_per_fold, test_scores_per_fold]
@@ -439,21 +453,7 @@ class FeliminationRFECV(RFE):
                 )
             self.cv_results_["n_features"].append(current_number_of_features)
 
-            # for sparse case ranks is matrix
-            ranks = np.ravel(ranks)
-
-            if 0.0 < self.step < 1.0:
-                step = int(max(1, self.step * current_number_of_features))
-            else:
-                step = int(self.step)
-
-            # Eliminate the worst features
-            threshold = min(step, current_number_of_features - n_features_to_select)
-
-            support_[features[ranks][:threshold]] = False
-            ranking_[np.logical_not(support_)] += 1
             current_number_of_features = np.sum(support_)
-
         # Set final attributes
 
         # Estimate performances of final model
