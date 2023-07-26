@@ -191,9 +191,7 @@ class FeliminationRFECV(RFE):
     Parameters
     ----------
     estimator : ``Estimator`` instance
-        A supervised learning estimator with a ``fit`` method that provides
-        information about feature importance either through a ``coef_``
-        attribute or through a ``feature_importances_`` attribute.
+        A supervised learning estimator with a ``fit`` method.
     step : int or float, default=1
         If greater than or equal to 1, then ``step`` corresponds to the
         (integer) number of features to remove at each iteration.
@@ -363,6 +361,7 @@ class FeliminationRFECV(RFE):
             ensure_min_features=2,
             force_all_finite=not tags.get("allow_nan", True),
             multi_output=True,
+            dtype=None,
         )
 
         # Initialization
@@ -609,9 +608,7 @@ class PermutationImportanceRFECV(FeliminationRFECV):
     Parameters
     ----------
     estimator : ``Estimator`` instance
-        A supervised learning estimator with a ``fit`` method that provides
-        information about feature importance either through a ``coef_``
-        attribute or through a ``feature_importances_`` attribute.
+        A supervised learning estimator with a ``fit`` method.
     step : int or float, default=1
         If greater than or equal to 1, then ``step`` corresponds to the
         (integer) number of features to remove at each iteration.
@@ -748,7 +745,6 @@ class PermutationImportanceRFECV(FeliminationRFECV):
         max_samples=1.0,
     ) -> None:
         self.n_repeats = n_repeats
-        self.random_state = random_state
         self.sample_weight = sample_weight
         self.max_samples = max_samples
         super().__init__(
