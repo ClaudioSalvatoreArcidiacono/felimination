@@ -23,10 +23,10 @@ from sklearn.model_selection import check_cv, cross_validate
 from sklearn.model_selection._validation import _score
 from sklearn.utils import safe_sqr
 from sklearn.utils.metaestimators import _safe_split
-from sklearn.utils.parallel import Parallel, delayed
 from sklearn.utils.validation import check_is_fitted
 
 from felimination.importance import PermutationImportance
+from felimination.utils.parallel import Parallel, delayed
 
 
 def _train_score_get_importance(
