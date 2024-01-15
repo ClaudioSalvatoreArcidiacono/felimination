@@ -334,6 +334,16 @@ class FeliminationRFECV(RFE):
             importance_getter=importance_getter,
         )
 
+    @staticmethod
+    def _select_X_with_remaining_features(X, support, n_features):
+        features = np.arange(n_features)[support]
+        if isinstance(X, pd.DataFrame):
+            feature_names = X.columns[support]
+            X_remaining_features = X[feature_names]
+        else:
+            X_remaining_features = X[:, features]
+        return X_remaining_features, features
+
     def fit(self, X, y, groups=None, **fit_params):
         """Fit the RFE model and then the underlying estimator on the selected features.
 
@@ -354,7 +364,7 @@ class FeliminationRFECV(RFE):
         """
         self._validate_params()
         tags = self._get_tags()
-        X, y = self._validate_data(
+        self._validate_data(
             X,
             y,
             accept_sparse="csc",
@@ -385,8 +395,9 @@ class FeliminationRFECV(RFE):
         # Elimination
         while current_number_of_features > n_features_to_select:
             # Select remaining features
-            features = np.arange(n_features)[support_]
-            X_remaining_features = X[:, features]
+            X_remaining_features, features = self._select_X_with_remaining_features(
+                X, support=support_, n_features=n_features
+            )
 
             if self.verbose > 0:
                 print(
@@ -456,8 +467,10 @@ class FeliminationRFECV(RFE):
         # Set final attributes
 
         # Estimate performances of final model
-        features = np.arange(n_features)[support_]
-        X_remaining_features = X[:, features]
+        X_remaining_features, features = self._select_X_with_remaining_features(
+            X, support=support_, n_features=n_features
+        )
+
         cv_scores = cross_validate(
             self.estimator,
             X_remaining_features,
@@ -482,9 +495,12 @@ class FeliminationRFECV(RFE):
                 np.std(scores_per_fold)
             )
 
-        features = np.arange(n_features)[support_]
+        X_remaining_features, features = self._select_X_with_remaining_features(
+            X, support=support_, n_features=n_features
+        )
+
         self.estimator_ = clone(self.estimator)
-        self.estimator_.fit(X[:, features], y, **fit_params)
+        self.estimator_.fit(X_remaining_features, y, **fit_params)
 
         self.n_features_ = support_.sum()
         self.support_ = support_

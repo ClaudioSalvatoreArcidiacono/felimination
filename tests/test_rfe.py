@@ -1,11 +1,14 @@
 import numpy as np
 import pandas as pd
 import pytest
-from matplotlib.testing.compare import compare_images
+from sklearn.compose import ColumnTransformer
 from sklearn.datasets import make_classification, make_friedman1
+from sklearn.exceptions import NotFittedError
 from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.model_selection import ShuffleSplit
-from sklearn.exceptions import NotFittedError
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
+
 from felimination.rfe import PermutationImportanceRFECV
 
 
@@ -133,8 +136,15 @@ def test_perm_imp_rfecv_classification_base_case_pandas(
     random_state,
 ):
     X_with_rand, y = x_y_classification_with_rand_columns_pandas
+    ct = ColumnTransformer(
+        [
+            ("scaler", StandardScaler(), ["x1"]),
+        ],
+        remainder="passthrough",
+    )
+    estimator = Pipeline([("ct", ct), ("lr", LogisticRegression(random_state=42))])
     selector = PermutationImportanceRFECV(
-        LogisticRegression(random_state=random_state),
+        estimator,
         cv=cv,
         n_features_to_select=n_useful_features_classification,
     )
