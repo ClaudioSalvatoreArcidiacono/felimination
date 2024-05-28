@@ -67,8 +67,8 @@ def _train_score_get_importance(
     X_train, y_train = _safe_split(estimator, X, y, train)
     X_test, y_test = _safe_split(estimator, X, y, test, train)
     estimator = estimator.fit(X_train, y_train)
-    train_score = _score(estimator, X_train, y_train, scorer)
-    test_score = _score(estimator, X_test, y_test, scorer)
+    train_score = _score(estimator, X_train, y_train, scorer, score_params=None)
+    test_score = _score(estimator, X_test, y_test, scorer, score_params=None)
     importances = _get_feature_importances(
         estimator, importance_getter, X=X_test, y=y_test
     )
