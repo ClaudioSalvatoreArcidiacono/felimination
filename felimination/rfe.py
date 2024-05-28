@@ -6,6 +6,7 @@ This module contains the following classes:
 - `PermutationImportanceRFECV`: recursive feature elimination with
     cross-validation based on permutation importance.
 """
+
 from collections import defaultdict
 from inspect import signature
 from numbers import Integral

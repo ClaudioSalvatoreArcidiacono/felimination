@@ -31,6 +31,7 @@ This module contains the following classes:
 - `SampleSimilarityDriftRFE`: base class for drift-based sample similarity
     feature selection.
 """
+
 from collections import defaultdict
 from numbers import Integral
 
