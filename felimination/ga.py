@@ -1,5 +1,6 @@
 from itertools import cycle, islice
-from numbers import Integral
+from numbers import Integral, Real
+from operator import itemgetter
 from typing import Any, Iterable
 
 import numpy as np
@@ -7,10 +8,11 @@ import pandas as pd
 import seaborn as sns
 from joblib import effective_n_jobs
 from sklearn.base import BaseEstimator, MetaEstimatorMixin, clone, is_classifier
-from sklearn.feature_selection._base import MetaEstimatorMixin, SelectorMixin
+from sklearn.feature_selection import SelectorMixin
 from sklearn.linear_model._logistic import LogisticRegression
 from sklearn.metrics import check_scoring
 from sklearn.model_selection import check_cv, cross_validate
+from sklearn.utils._param_validation import HasMethods, Interval, RealNotInt
 from sklearn.utils.metaestimators import available_if
 from sklearn.utils.validation import check_is_fitted
 
@@ -95,11 +97,34 @@ def rank_mean_test_score_fitness(pool):
 class HybridImportanceGACVFeatureSelector(
     SelectorMixin, MetaEstimatorMixin, BaseEstimator
 ):
+    _parameter_constraints: dict = {
+        "estimator": [HasMethods(["fit"])],
+        "min_n_features_to_select": [
+            None,
+            Interval(RealNotInt, 0, 1, closed="right"),
+            Interval(Integral, 0, None, closed="neither"),
+        ],
+        "init_avg_features_num": [
+            Interval(Real, 0, None, closed="neither"),
+        ],
+        "init_std_features_num": [
+            Interval(Real, 0, None, closed="neither"),
+        ],
+        "pool_size": [Interval(Integral, 1, None, closed="neither")],
+        "n_children_cross_over": [Interval(Integral, 0, None, closed="neither")],
+        "is_parent_selection_chance_proportional_to_fitness": [bool],
+        "n_parents_cross_over": [Interval(Integral, 2, None, closed="left")],
+        "n_mutations": [Interval(Integral, 0, None, closed="neither")],
+        "max_generations": [Interval(Integral, 1, None, closed="neither")],
+        "patience": [Interval(Integral, 1, None, closed="neither")],
+        "importance_getter": [str, callable],
+    }
+
     def __init__(
         self,
         estimator: BaseEstimator | LogisticRegression,
         *,
-        cv=None,
+        cv=5,
         scoring=None,
         random_state=None,
         n_jobs=None,
@@ -216,7 +241,7 @@ class HybridImportanceGACVFeatureSelector(
 
         return fitness
 
-    def _combine_parents(parents):
+    def _combine_parents(self, parents):
 
         sorted_features = [
             np.array(parent["features"])[
@@ -349,14 +374,17 @@ class HybridImportanceGACVFeatureSelector(
                 "features": list(
                     np.random.choice(
                         all_features,
-                        max(
-                            int(
-                                np.random.normal(
-                                    self.init_avg_features_num,
-                                    self.init_std_features_num,
-                                )
+                        min(
+                            max(
+                                int(
+                                    np.random.normal(
+                                        self.init_avg_features_num,
+                                        self.init_std_features_num,
+                                    )
+                                ),
+                                min_n_features_to_select,
                             ),
-                            min_n_features_to_select,
+                            n_features,
                         ),
                         replace=False,
                     )
@@ -384,7 +412,9 @@ class HybridImportanceGACVFeatureSelector(
             pool_sorted = [
                 element
                 for _, element in sorted(
-                    zip(self._calculate_fitness(pool), pool), reverse=True
+                    zip(self._calculate_fitness(pool), pool),
+                    reverse=True,
+                    key=itemgetter(0),
                 )
             ]
             pool = pool_sorted[: self.pool_size]
