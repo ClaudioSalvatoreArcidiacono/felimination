@@ -253,14 +253,13 @@ def test_rank_mean_test_score_fitness():
     assert fitness == [3, 2, 1]
 
 
-@pytest.mark.parametrize(("n_jobs"), [1, -1])
 def test_find_best_features_classification_n_jobs_arrays(
     x_y_classification_with_rand_columns_arrays,
     n_useful_features_classification,
     n_random_features,
     cv_classification,
     random_state,
-    n_jobs,
+    n_jobs=-1,
 ):
     X, y = x_y_classification_with_rand_columns_arrays
     selector = HybridImportanceGACVFeatureSelector(
@@ -277,6 +276,32 @@ def test_find_best_features_classification_n_jobs_arrays(
         selector.support_
         == [True] * n_useful_features_classification + [False] * n_random_features
     ).all()
+
+
+def test_find_best_features_classification_n_jobs_string_fitness(
+    x_y_classification_with_rand_columns_arrays,
+    n_useful_features_classification,
+    cv_classification,
+    random_state,
+    n_jobs=-1,
+):
+    X, y = x_y_classification_with_rand_columns_arrays
+    selector = HybridImportanceGACVFeatureSelector(
+        LogisticRegression(random_state=random_state),
+        random_state=random_state,
+        cv=cv_classification,
+        n_jobs=n_jobs,
+        init_avg_features_num=n_useful_features_classification,
+        init_std_features_num=1,
+        fitness_function="mean_test_score",
+    )
+    selector.fit(X, y)
+
+    assert (
+        selector.support_[:n_useful_features_classification].sum()
+        >= n_useful_features_classification - 1
+    )
+    assert selector.support_[n_useful_features_classification:].sum() <= 2
 
 
 def test_find_best_features_regression_n_jobs_arrays(
@@ -302,7 +327,7 @@ def test_find_best_features_regression_n_jobs_arrays(
 
 
 @pytest.mark.parametrize(("n_jobs"), [1, -1])
-def test_find_best_features_classification_n_jobs_pandas(
+def test_find_best_features_classification_n_jobs_pandas(  # parallel:  73s; sequential: 2m 8s
     x_y_classification_with_rand_columns_pandas,
     n_useful_features_classification,
     n_random_features,
