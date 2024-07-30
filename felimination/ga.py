@@ -15,7 +15,7 @@ from sklearn.base import BaseEstimator, MetaEstimatorMixin, clone, is_classifier
 from sklearn.feature_selection import SelectorMixin
 from sklearn.linear_model._logistic import LogisticRegression
 from sklearn.metrics import check_scoring
-from sklearn.model_selection import check_cv, cross_validate
+from sklearn.model_selection import check_cv
 from sklearn.utils._param_validation import HasMethods, Interval, RealNotInt
 from sklearn.utils.metaestimators import available_if
 from sklearn.utils.validation import check_is_fitted
