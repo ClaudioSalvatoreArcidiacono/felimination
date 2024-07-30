@@ -158,6 +158,10 @@ class FeliminationRFECV(RFE):
         best) features are assigned rank 1.
     support_ : ndarray of shape (n_features,)
         The mask of selected features.
+    callbacks : list of callable, default=None
+        List of callables to be called at the end of each step of the feature
+        selection. Each callable should accept two parameters: the selector
+        and the importances computed at that step.
 
     Examples
     --------
@@ -567,6 +571,10 @@ class PermutationImportanceRFECV(FeliminationRFECV):
         it keeps the method tractable when evaluating feature importance on
         large datasets. In combination with `n_repeats`, this allows to control
         the computational speed vs statistical accuracy trade-off of this method.
+    callbacks : list of callable, default=None
+        List of callables to be called at the end of each step of the feature
+        selection. Each callable should accept two parameters: the selector
+        and the importances computed at that step.
 
 
     Attributes
