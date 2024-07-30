@@ -299,3 +299,51 @@ def test_find_best_features_regression_n_jobs_arrays(
     selector.fit(X, y)
     assert selector.support_[:n_useful_features_regression].sum() >= 4
     assert selector.support_[n_useful_features_regression:].sum() <= 1
+
+
+@pytest.mark.parametrize(("n_jobs"), [1, -1])
+def test_find_best_features_classification_n_jobs_pandas(
+    x_y_classification_with_rand_columns_pandas,
+    n_useful_features_classification,
+    n_random_features,
+    cv_classification,
+    random_state,
+    n_jobs,
+):
+    X, y = x_y_classification_with_rand_columns_pandas
+    selector = HybridImportanceGACVFeatureSelector(
+        LogisticRegression(random_state=random_state),
+        random_state=random_state,
+        cv=cv_classification,
+        n_jobs=n_jobs,
+        init_avg_features_num=n_useful_features_classification,
+        init_std_features_num=1,
+    )
+    selector.fit(X, y)
+
+    assert (
+        selector.support_
+        == [True] * n_useful_features_classification + [False] * n_random_features
+    ).all()
+
+
+def test_find_best_features_regression_n_jobs_pandas(
+    x_y_regression_with_rand_columns_pandas,
+    n_useful_features_regression,
+    cv_regression,
+    random_state,
+    n_jobs=-1,
+):
+    X, y = x_y_regression_with_rand_columns_pandas
+    selector = HybridImportanceGACVFeatureSelector(
+        LinearRegression(),
+        random_state=random_state,
+        cv=cv_regression,
+        n_jobs=n_jobs,
+        init_avg_features_num=n_useful_features_regression,
+        init_std_features_num=1,
+        importance_getter=PermutationImportance(),
+    )
+    selector.fit(X, y)
+    assert selector.support_[:n_useful_features_regression].sum() >= 4
+    assert selector.support_[n_useful_features_regression:].sum() <= 1
