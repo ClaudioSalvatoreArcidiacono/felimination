@@ -46,7 +46,7 @@ def _select_X_with_features(X, features):
         return X[:, features]
 
 
-def roundrobin(*iterables: Iterable[Iterable[Any]]) -> Iterable[Any]:
+def _roundrobin(*iterables: Iterable[Iterable[Any]]) -> Iterable[Any]:
     """Implements the round robin algorithm.
 
     Given a some iterables extracts the first item from each iterable in turn,
@@ -72,12 +72,37 @@ def roundrobin(*iterables: Iterable[Iterable[Any]]) -> Iterable[Any]:
             nexts = cycle(islice(nexts, num_active))
 
 
-def deduplicate(seq: list):
+def _deduplicate(seq: list):
     seen = set()
     return [x for x in seq if not (x in seen or seen.add(x))]
 
 
 def rank_mean_test_score_overfit_fitness(pool):
+    """Define the fitness function as the sum of the rank of the mean test score and the rank of the
+    overfit.
+
+    The rank of the mean test score is calculated by ranking the mean test score in ascending order.
+    The rank of the overfit is calculated by ranking the overfit in ascending order.
+    The overfit is calculated as the difference between the mean train score and the mean test score.
+    The fitness is the sum of the rank of the mean test score and the rank of the overfit.
+
+    Parameters
+    ----------
+    pool : list of dict
+        Each element in the list is a dictionary with the following keys:
+        - features: list of int
+            The features selected for this element.
+        - mean_test_score: float
+            The mean test score of the element.
+        - mean_train_score: float
+            The mean train score of the element.
+
+    Returns
+    -------
+    fitness : list of float
+        The fitness of each element in the pool.
+    """
+
     pool_df = pd.DataFrame(pool)
     pool_df["rank_mean_test_score"] = pool_df["mean_test_score"].rank(ascending=False)
     pool_df["overfit"] = pool_df["mean_train_score"] - pool_df["mean_test_score"]
@@ -89,6 +114,27 @@ def rank_mean_test_score_overfit_fitness(pool):
 
 
 def rank_mean_test_score_fitness(pool):
+    """Define the fitness function as the rank of the mean test score.
+
+    The rank of the mean test score is calculated by ranking the mean test score in ascending order.
+
+    Parameters
+    ----------
+
+    pool : list of dict
+        Each element in the list is a dictionary with the following keys:
+        - features: list of int
+            The features selected for this element.
+        - mean_test_score: float
+            The mean test score of the element.
+        - mean_train_score: float
+            The mean train score of the element.
+
+    Returns
+    -------
+    fitness : list of float
+        The fitness of each element in the pool.
+    """
     pool_df = pd.DataFrame(pool)
     pool_df["rank_mean_test_score"] = pool_df["mean_test_score"].rank(ascending=True)
     return pool_df["rank_mean_test_score"].to_list()
@@ -97,6 +143,163 @@ def rank_mean_test_score_fitness(pool):
 class HybridImportanceGACVFeatureSelector(
     SelectorMixin, MetaEstimatorMixin, BaseEstimator
 ):
+    """Feature selection using Hybrid Genetic Algorithm-Importance with Cross-Validation.
+
+    This feature selector uses a genetic algorithm to select features. The genetic algorithm
+    is hybridized with feature importance. The feature importance is calculated using a
+    cross-validation scheme. The algorithm works as follows:
+
+    **Pool initialization:** The pool is initialized with random features. The number of features is
+    randomly generated using a normal distribution with the average number of features to select and
+    the standard deviation of the number of features to select as parameters. The number of features
+    is clipped to be between the minimum number of features to select and the number of features in
+    the dataset.
+
+    **Cross Over:** The cross over is done by combining the features of the parents. The features
+    are sorted by importance and the children are created by combining the features of the parents
+    in a round-robin fashion. The number of features of the children is the average of the number of
+    features of the parents. In this way, the children will have the most important features of the
+    parents.
+
+    **Mutation:** The mutation is done by randomly changing the number of features and replacing the
+    least important features with random features.
+
+    **Selection:** The selection is done by selecting the top `pool_size` solutions based on the
+    fitness function.
+
+
+    Parameters
+    ----------
+    estimator : object
+        An estimator that follows the scikit-learn API and has a `fit` method.
+    cv : int, cross-validation generator or an iterable, default=5
+        Determines the cross-validation splitting strategy.
+        Possible inputs for cv are:
+        - None, to use the default 5-fold cross-validation,
+        - int, to specify the number of folds in a (Stratified)KFold,
+        - :term:`CV splitter`,
+        - An iterable yielding (train, test) splits as arrays of indices.
+    scoring : str, callable or None, default=None
+        A string (see model evaluation documentation) or
+        a scorer callable object / function with signature
+        ``scorer(estimator, X, y)``.
+    random_state : int or None, default=None
+        Controls the random seed given at the beginning of the algorithm.
+    n_jobs : int or None, default=None
+        The number of jobs to run in parallel. None means 1 unless in a
+        joblib.parallel_backend context. -1 means using all processors.
+    importance_getter : str or callable, default='auto'
+        If 'auto', uses the feature importance either through a `coef_`
+        or `feature_importances_` attributes of estimator.
+
+        Also accepts a string that specifies an attribute name/path
+        for extracting feature importance.
+        For example, give `regressor_.coef_` in case of
+        :class:`~sklearn.compose.TransformedTargetRegressor`  or
+        `named_steps.clf.feature_importances_` in case of
+        :class:`~sklearn.pipeline.Pipeline` with its last step named `clf`.
+
+        If `callable`, overrides the default feature importance getter.
+        The callable is passed with the fitted estimator and the validation set
+        (X_val, y_val, estimator) and it should return importance for each feature.
+    min_n_features_to_select : int or float, default=1
+        The minimum number of features to select. If float, it represents the
+        fraction of features to select.
+    init_avg_features_num : float, default=15
+        The average number of features to select in the initial pool of solutions.
+    init_std_features_num : float, default=5
+        The standard deviation of the number of features to select in the initial pool of solutions.
+    pool_size : int, default=20
+        The number of solutions in the pool.
+    n_children_cross_over : int, default=5
+        The number of children to create by cross-over.
+    is_parent_selection_chance_proportional_to_fitness : bool, default=True
+        If True, the probability of selecting a parent is proportional to its fitness. This means
+        that the fittest parents are more likely to be selected during crossover.
+    n_parents_cross_over : int, default=2
+        The number of parents to select in each crossover. More than 2 parents can be selected during
+        crossover. In that case, the top features of each parent are combined in a round-robin
+        fashion to create a children. The number of features of the children is the average of the
+        number of features of the parents.
+    n_mutations : int, default=5
+        The number of mutations to apply to the pool.
+    range_change_n_features_mutation : tuple, default=(-2, 3)
+        The range of the number of features to change during mutation. The first element is the
+        minimum number of features to change and the second element is the maximum number of features
+        to change. The right limit is exclusive.
+    range_randomly_swapped_features_mutation : tuple, default=(1, 4)
+        The range of the number of features to replace during mutation. The first element is the
+        minimum number of features to replace and the second element is the maximum number of
+        features to replace. The right limit is exclusive.
+    max_generations : int, default=100
+        The maximum number of generations to run the genetic algorithm.
+    patience : int, default=5
+        The number of generations without improvement to wait before stopping the algorithm.
+    callbacks : list of callable, default=None
+        A list of callables that are called after each generation. Each callable should accept
+        the selector and the pool as arguments.
+    fitness_function : str or callable, default='rank_mean_test_score_overfit_fitness'
+        The fitness function to use. Possible string values are: `'mean_test_score'`, `'mean_train_score'`,
+        If a callable is passed, it should accept a list of dictionaries where each dictionary
+        has the following keys 'features', 'mean_test_score', 'mean_train_score' and return a list
+        of floats with the fitness of each element in the pool.
+
+    Attributes
+    ----------
+
+    estimator_ : object
+        The fitted estimator.
+
+    support_ : array of shape (n_features,)
+        The mask of selected features.
+
+    best_solution_ : dict
+        The best solution found by the genetic algorithm. It is a dictionary with the following keys
+        - features: list of int
+            The features selected for this element.
+        - mean_test_score: float
+            The mean test score of the element.
+        - mean_train_score: float
+            The mean train score of the element.
+        - train_scores_per_fold: list of float
+            The train score of each fold.
+        - test_scores_per_fold: list of float
+            The test score of each fold.
+        - cv_importances: list of array
+            The importances of each fold.
+        - mean_cv_importances: array
+            The mean importances of each fold.
+
+    best_solutions_ : list of dict
+        The best solutions found by the genetic algorithm at each generation. Each element is
+        defined as in `best_solution_`.
+
+    Examples
+    --------
+
+    >>> from felimination.ga import HybridImportanceGACVFeatureSelector
+    >>> from sklearn.datasets import make_classification
+    >>> from sklearn.linear_model import LogisticRegression
+    >>> X, y = make_classification(
+        n_samples=sample_size,
+        n_features=2,
+        n_classes=2,
+        n_redundant=0,
+        n_clusters_per_class=1,
+        random_state=random_state,
+    )
+    >>> estimator = LogisticRegression(random_state=42)
+    >>> selector = selector = HybridImportanceGACVFeatureSelector(
+        random_state=random_state,
+        init_avg_features_num=2,
+        init_std_features_num=1,
+    )
+    >>> selector = selector.fit(X, y)
+    >>> selector.support_
+    array([ True,  True,  True,  True,  True, False, False, False, False,
+           False])
+    """
+
     _parameter_constraints: dict = {
         "estimator": [HasMethods(["fit"])],
         "min_n_features_to_select": [
@@ -249,7 +452,7 @@ class HybridImportanceGACVFeatureSelector(
             ]
             for parent in parents
         ]
-        combined_features = deduplicate(roundrobin(*sorted_features))
+        combined_features = _deduplicate(_roundrobin(*sorted_features))
         n_features = int(
             round(np.mean([len(parent["features"]) for parent in parents]))
         )
@@ -448,6 +651,20 @@ class HybridImportanceGACVFeatureSelector(
         return self
 
     def plot(self, **kwargs):
+        """Plot the mean test score and mean train score of the best solution at each generation.
+
+        Parameters
+        ----------
+        **kwargs : dict
+            Additional parameters passed to seaborn.lineplot. For a list
+            of possible options, please visit
+            [seaborn.lineplot](https://seaborn.pydata.org/generated/seaborn.lineplot.html)  # noqa
+
+        Returns
+        -------
+        matplotlib.axes.Axes
+            The axis where the plot has been plotted.
+        """
         data_points_to_plot_long_form = []
         for generation, best_solution in enumerate(self.best_solutions_, start=1):
             for set, scores in zip(

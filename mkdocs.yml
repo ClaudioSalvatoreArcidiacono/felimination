@@ -29,6 +29,8 @@ plugins:
       python:
         options:
           docstring_style: numpy
+          merge_init_into_class: true
+          docstring_section_style: list
         import:
         - https://scikit-learn.org/stable/objects.inv
 
