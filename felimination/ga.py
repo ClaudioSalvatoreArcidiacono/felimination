@@ -195,9 +195,9 @@ class HybridImportanceGACVFeatureSelector(
         Also accepts a string that specifies an attribute name/path
         for extracting feature importance.
         For example, give `regressor_.coef_` in case of
-        :class:`~sklearn.compose.TransformedTargetRegressor`  or
+        `~sklearn.compose.TransformedTargetRegressor`  or
         `named_steps.clf.feature_importances_` in case of
-        :class:`~sklearn.pipeline.Pipeline` with its last step named `clf`.
+        `~sklearn.pipeline.Pipeline` with its last step named `clf`.
 
         If `callable`, overrides the default feature importance getter.
         The callable is passed with the fitted estimator and the validation set
@@ -238,11 +238,12 @@ class HybridImportanceGACVFeatureSelector(
     callbacks : list of callable, default=None
         A list of callables that are called after each generation. Each callable should accept
         the selector and the pool as arguments.
-    fitness_function : str or callable, default='rank_mean_test_score_overfit_fitness'
-        The fitness function to use. Possible string values are: `'mean_test_score'`, `'mean_train_score'`,
-        If a callable is passed, it should accept a list of dictionaries where each dictionary
-        has the following keys 'features', 'mean_test_score', 'mean_train_score' and return a list
-        of floats with the fitness of each element in the pool.
+    fitness_function : str or callable, default=rank_mean_test_score_overfit_fitness
+        The fitness function to use. Possible string values are: `'mean_test_score'`,
+        `'mean_train_score'`, If a callable is passed, it should accept a list of dictionaries where
+        each dictionary has the following keys 'features', 'mean_test_score', 'mean_train_score' and
+        return a list of floats with the fitness of each element in the pool. Defaults to
+        [rank_mean_test_score_overfit_fitness](./#felimination.ga.rank_mean_test_score_fitness)
 
     Attributes
     ----------

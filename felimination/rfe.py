@@ -90,9 +90,9 @@ class FeliminationRFECV(RFE):
             - An iterable yielding (train, test) splits as arrays of indices.
 
         For integer/None inputs, if ``y`` is binary or multiclass,
-        :class:`~sklearn.model_selection.StratifiedKFold` is used. If the
+        `~sklearn.model_selection.StratifiedKFold` is used. If the
         estimator is a classifier or if ``y`` is neither binary nor multiclass,
-        :class:`~sklearn.model_selection.KFold` is used.
+        `~sklearn.model_selection.KFold` is used.
 
         Refer :ref:`User Guide <cross_validation>` for the various
         cross-validation strategies that can be used here.
@@ -113,9 +113,9 @@ class FeliminationRFECV(RFE):
         Also accepts a string that specifies an attribute name/path
         for extracting feature importance.
         For example, give `regressor_.coef_` in case of
-        :class:`~sklearn.compose.TransformedTargetRegressor`  or
+        `~sklearn.compose.TransformedTargetRegressor`  or
         `named_steps.clf.feature_importances_` in case of
-        :class:`~sklearn.pipeline.Pipeline` with its last step named `clf`.
+        `~sklearn.pipeline.Pipeline` with its last step named `clf`.
 
         If `callable`, overrides the default feature importance getter.
         The callable is passed with the fitted estimator and the validation set
@@ -532,9 +532,9 @@ class PermutationImportanceRFECV(FeliminationRFECV):
         - An iterable yielding (train, test) splits as arrays of indices.
 
         For integer/None inputs, if ``y`` is binary or multiclass,
-        :class:`~sklearn.model_selection.StratifiedKFold` is used. If the
+        `~sklearn.model_selection.StratifiedKFold` is used. If the
         estimator is a classifier or if ``y`` is neither binary nor multiclass,
-        :class:`~sklearn.model_selection.KFold` is used.
+        `~sklearn.model_selection.KFold` is used.
 
         Refer :ref:`User Guide <cross_validation>` for the various
         cross-validation strategies that can be used here.
