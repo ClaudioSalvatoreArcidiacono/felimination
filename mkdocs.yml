@@ -24,6 +24,8 @@ theme:
 
 plugins:
 - search
+- mkdocs-jupyter:
+    no_prompts: True
 - mkdocstrings:
     handlers:
       python:

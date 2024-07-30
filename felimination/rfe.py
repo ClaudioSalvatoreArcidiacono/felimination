@@ -644,6 +644,7 @@ class PermutationImportanceRFECV(FeliminationRFECV):
         random_state=None,
         sample_weight=None,
         max_samples=1.0,
+        callbacks=None,
     ) -> None:
         self.n_repeats = n_repeats
         self.sample_weight = sample_weight
@@ -657,6 +658,7 @@ class PermutationImportanceRFECV(FeliminationRFECV):
             scoring=scoring,
             verbose=verbose,
             n_jobs=n_jobs,
+            callbacks=callbacks,
             importance_getter=PermutationImportance(
                 scoring=scoring,
                 n_repeats=n_repeats,
