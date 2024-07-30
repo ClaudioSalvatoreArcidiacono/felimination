@@ -1,3 +1,7 @@
+"""This module contains the implementation of the Hybrid Genetic Algorithm-Importance with
+Cross-Validation. The algorithm is implemented in the `HybridImportanceGACVFeatureSelector` class.
+"""
+
 from itertools import cycle, islice
 from numbers import Integral, Real
 from operator import itemgetter
