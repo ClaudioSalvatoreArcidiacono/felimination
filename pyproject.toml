@@ -1,7 +1,7 @@
 [project]
 name = "felimination"
 description = "This library contains some useful scikit-learn compatible classes for feature selection."
-version = "0.2.3"
+version = "0.3.0"
 keywords = ["feature selection", "scikit-learn", "machine learning"]
 authors = [
     { name = "Claudio Salvatore Arcidiacono", email = "author@email.com" }
@@ -32,6 +32,7 @@ doc = [
     "mkdocs",
     "mkdocs-material",
     "mkdocstrings[python]",
+    "mkdocs-jupyter",
 ]
 build = [
     "build",

@@ -8,9 +8,7 @@ This module contains the following classes:
 """
 
 from collections import defaultdict
-from inspect import signature
 from numbers import Integral
-from operator import attrgetter
 
 import numpy as np
 import pandas as pd
@@ -21,137 +19,14 @@ from sklearn.feature_selection import RFE
 from sklearn.linear_model._logistic import LogisticRegression
 from sklearn.metrics import check_scoring
 from sklearn.model_selection import check_cv, cross_validate
-from sklearn.model_selection._validation import _score
-from sklearn.utils import safe_sqr
-from sklearn.utils.metaestimators import _safe_split
+
 from sklearn.utils.validation import check_is_fitted
 
-from felimination.importance import PermutationImportance
+from felimination.importance import (
+    PermutationImportance,
+    _train_score_get_importance,
+)
 from felimination.utils.parallel import Parallel, delayed
-
-
-def _train_score_get_importance(
-    estimator, X, y, train, test, scorer, importance_getter
-):
-    """
-    Train and test an estimator and get the feature importances.
-
-    Parameters
-    ----------
-    estimator : estimator
-        A scikit-learn estimator to train score and to calculate importance on.
-    X : {array-like, sparse matrix} of shape (n_samples, n_features)
-        The feature samples to use to train and test the estimator.
-    y : array-like of shape (n_samples,)
-        The target values to use to train and test the estimator.
-    train : array-like of shape (n_train_samples,)
-        The indices of the training samples.
-    test : array like of shape (n_test_samples,)
-        The indices of the test samples.
-    scorer : callable
-        The scorer to use to score the estimator.
-    importance_getter : "auto", str or callable
-        An attribute or a callable to get the feature importance. If `"auto "`,
-        `estimator` is expected to expose `coef_` or `feature_importances_`.
-
-    Returns
-    -------
-    train_score : float
-        The score of the estimator on the training set.
-    test_score : float
-        The score of the estimator on the test set.
-    importances : ndarray of shape (n_features,)
-        The features importances.
-    """
-
-    estimator = clone(estimator)
-    X_train, y_train = _safe_split(estimator, X, y, train)
-    X_test, y_test = _safe_split(estimator, X, y, test, train)
-    estimator = estimator.fit(X_train, y_train)
-    train_score = _score(estimator, X_train, y_train, scorer, score_params=None)
-    test_score = _score(estimator, X_test, y_test, scorer, score_params=None)
-    importances = _get_feature_importances(
-        estimator, importance_getter, X=X_test, y=y_test
-    )
-    return train_score, test_score, importances
-
-
-def _get_feature_importances(
-    estimator, getter, transform_func=None, norm_order=1, X=None, y=None
-):
-    """
-    Retrieve and aggregate (ndim > 1)  the feature importances
-    from an estimator. Also optionally applies transformation.
-
-    Parameters
-    ----------
-    estimator : estimator
-        A scikit-learn estimator from which we want to get the feature
-        importances.
-    getter : "auto", str or callable
-        An attribute or a callable to get the feature importance. If `"auto"`,
-        `estimator` is expected to expose `coef_` or `feature_importances`.
-    transform_func : {"norm", "square"}, default=None
-        The transform to apply to the feature importances. By default (`None`)
-        no transformation is applied.
-    norm_order : int, default=1
-        The norm order to apply when `transform_func="norm"`. Only applied
-        when `importances.ndim > 1`.
-    X : {array-like, sparse matrix} of shape (n_samples, n_features), default=None
-        The feature samples to use to compute feature importance.
-    y : array-like of shape (n_samples,), default=None
-        The target values to use to compute feature importance.
-
-    Returns
-    -------
-    importances : ndarray of shape (n_features,)
-        The features importances, optionally transformed.
-    """
-    if isinstance(getter, str):
-        if getter == "auto":
-            if hasattr(estimator, "coef_"):
-                getter = attrgetter("coef_")
-            elif hasattr(estimator, "feature_importances_"):
-                getter = attrgetter("feature_importances_")
-            else:
-                raise ValueError(
-                    "when `importance_getter=='auto'`, the underlying "
-                    f"estimator {estimator.__class__.__name__} should have "
-                    "`coef_` or `feature_importances_` attribute. Either "
-                    "pass a fitted estimator to feature selector or call fit "
-                    "before calling transform."
-                )
-        else:
-            getter = attrgetter(getter)
-        importances = getter(estimator)
-
-    else:
-        # getter is a callable
-        if len(signature(getter).parameters) == 3:
-            importances = getter(estimator, X, y)
-        else:
-            importances = getter(estimator)
-
-    if transform_func is None:
-        return importances
-    elif transform_func == "norm":
-        if importances.ndim == 1:
-            importances = np.abs(importances)
-        else:
-            importances = np.linalg.norm(importances, axis=0, ord=norm_order)
-    elif transform_func == "square":
-        if importances.ndim == 1:
-            importances = safe_sqr(importances)
-        else:
-            importances = safe_sqr(importances).sum(axis=0)
-    else:
-        raise ValueError(
-            "Valid values for `transform_func` are "
-            + "None, 'norm' and 'square'. Those two "
-            + "transformation are only supported now"
-        )
-
-    return importances
 
 
 class FeliminationRFECV(RFE):
@@ -215,9 +90,9 @@ class FeliminationRFECV(RFE):
             - An iterable yielding (train, test) splits as arrays of indices.
 
         For integer/None inputs, if ``y`` is binary or multiclass,
-        :class:`~sklearn.model_selection.StratifiedKFold` is used. If the
+        `~sklearn.model_selection.StratifiedKFold` is used. If the
         estimator is a classifier or if ``y`` is neither binary nor multiclass,
-        :class:`~sklearn.model_selection.KFold` is used.
+        `~sklearn.model_selection.KFold` is used.
 
         Refer :ref:`User Guide <cross_validation>` for the various
         cross-validation strategies that can be used here.
@@ -238,9 +113,9 @@ class FeliminationRFECV(RFE):
         Also accepts a string that specifies an attribute name/path
         for extracting feature importance.
         For example, give `regressor_.coef_` in case of
-        :class:`~sklearn.compose.TransformedTargetRegressor`  or
+        `~sklearn.compose.TransformedTargetRegressor`  or
         `named_steps.clf.feature_importances_` in case of
-        :class:`~sklearn.pipeline.Pipeline` with its last step named `clf`.
+        `~sklearn.pipeline.Pipeline` with its last step named `clf`.
 
         If `callable`, overrides the default feature importance getter.
         The callable is passed with the fitted estimator and the validation set
@@ -283,6 +158,10 @@ class FeliminationRFECV(RFE):
         best) features are assigned rank 1.
     support_ : ndarray of shape (n_features,)
         The mask of selected features.
+    callbacks : list of callable, default=None
+        List of callables to be called at the end of each step of the feature
+        selection. Each callable should accept two parameters: the selector
+        and the importances computed at that step.
 
     Examples
     --------
@@ -322,11 +201,13 @@ class FeliminationRFECV(RFE):
         verbose=0,
         n_jobs=None,
         importance_getter="auto",
+        callbacks=None,
     ) -> None:
         self.cv = cv
         self.scoring = scoring
         self.n_jobs = n_jobs
         self.random_state = random_state
+        self.callbacks = callbacks
         super().__init__(
             estimator,
             n_features_to_select=n_features_to_select,
@@ -463,6 +344,9 @@ class FeliminationRFECV(RFE):
                     np.std(scores_per_fold)
                 )
             self.cv_results_["n_features"].append(current_number_of_features)
+            if self.callbacks:
+                for callback in self.callbacks:
+                    callback(self, cv_importances)
 
             current_number_of_features = np.sum(support_)
         # Set final attributes
@@ -495,6 +379,10 @@ class FeliminationRFECV(RFE):
             self.cv_results_[f"std_{train_or_test}_score"].append(
                 np.std(scores_per_fold)
             )
+
+        if self.callbacks:
+            for callback in self.callbacks:
+                callback(self, cv_importances)
 
         X_remaining_features, features = self._select_X_with_remaining_features(
             X, support=support_, n_features=n_features
@@ -648,9 +536,9 @@ class PermutationImportanceRFECV(FeliminationRFECV):
         - An iterable yielding (train, test) splits as arrays of indices.
 
         For integer/None inputs, if ``y`` is binary or multiclass,
-        :class:`~sklearn.model_selection.StratifiedKFold` is used. If the
+        `~sklearn.model_selection.StratifiedKFold` is used. If the
         estimator is a classifier or if ``y`` is neither binary nor multiclass,
-        :class:`~sklearn.model_selection.KFold` is used.
+        `~sklearn.model_selection.KFold` is used.
 
         Refer :ref:`User Guide <cross_validation>` for the various
         cross-validation strategies that can be used here.
@@ -683,6 +571,10 @@ class PermutationImportanceRFECV(FeliminationRFECV):
         it keeps the method tractable when evaluating feature importance on
         large datasets. In combination with `n_repeats`, this allows to control
         the computational speed vs statistical accuracy trade-off of this method.
+    callbacks : list of callable, default=None
+        List of callables to be called at the end of each step of the feature
+        selection. Each callable should accept two parameters: the selector
+        and the importances computed at that step.
 
 
     Attributes
@@ -760,6 +652,7 @@ class PermutationImportanceRFECV(FeliminationRFECV):
         random_state=None,
         sample_weight=None,
         max_samples=1.0,
+        callbacks=None,
     ) -> None:
         self.n_repeats = n_repeats
         self.sample_weight = sample_weight
@@ -773,6 +666,7 @@ class PermutationImportanceRFECV(FeliminationRFECV):
             scoring=scoring,
             verbose=verbose,
             n_jobs=n_jobs,
+            callbacks=callbacks,
             importance_getter=PermutationImportance(
                 scoring=scoring,
                 n_repeats=n_repeats,
