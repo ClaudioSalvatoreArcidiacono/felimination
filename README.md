@@ -1,4 +1,4 @@
-# Homepage
+# Felimination
 
 This library contains some useful scikit-learn compatible classes for feature selection.
 
@@ -55,7 +55,7 @@ selector.ranking_
 # array([9, 3, 8, 9, 7, 8, 5, 6, 9, 6, 8, 1, 9, 7, 8, 9, 9, 2, 4, 7])
 selector.plot()
 ```
-![RFECV fit plot](./assets/rfecv_fit_plot.png)
+![RFECV fit plot](./docs/assets/rfecv_fit_plot.png)
 
 It looks like `5` is a good number of features, we can set the number of features to select to 5 without need of retraining
 
@@ -126,7 +126,7 @@ selector.best_solution_
 # Show progress as a plot
 selector.plot()
 ```
-![GA fit plot](./assets/ga_fit_plot.png)
+![GA fit plot](./docs/assets/ga_fit_plot.png)
 
 Looks like that the optimisation process converged after 2 steps, since the best score did not improve for 5(=`patience`) consecutive steps, the optimisation process stopped early.
 
