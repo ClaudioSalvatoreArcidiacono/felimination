@@ -119,6 +119,7 @@ def test_perm_imp_rfecv_classification_base_case_np_arrays(
     )
 
     selector.fit(X_with_rand, y)
+    selector.set_n_features_to_select(n_useful_features_classification)
     assert (
         selector.ranking_[:n_useful_features_classification]
         == [1] * n_useful_features_classification
@@ -149,8 +150,8 @@ def test_perm_imp_rfecv_classification_base_case_pandas(
         cv=cv,
         min_features_to_select=n_useful_features_classification,
     )
-
     selector.fit(X_with_rand, y)
+    selector.set_n_features_to_select(n_useful_features_classification)
     assert (
         selector.ranking_[:n_useful_features_classification]
         == [1] * n_useful_features_classification
@@ -184,6 +185,7 @@ def test_perm_imp_rfecv_n_jobs(
     )
 
     selector.fit(X_with_rand, y)
+    selector.set_n_features_to_select(n_useful_features_classification)
     assert (
         selector.ranking_[:n_useful_features_classification]
         == [1] * n_useful_features_classification
@@ -224,6 +226,7 @@ def test_perm_imp_rfecv_regression_base_case_np_arrays(
     )
 
     selector.fit(X_with_rand, y)
+    selector.set_n_features_to_select(n_useful_features_regression)
     assert (
         selector.ranking_[:n_useful_features_regression]
         == [1] * n_useful_features_regression
@@ -246,6 +249,7 @@ def test_perm_imp_rfecv_regression_base_case_pandas(
     )
 
     selector.fit(X_with_rand, y)
+    selector.set_n_features_to_select(n_useful_features_regression)
     assert (
         selector.ranking_[:n_useful_features_regression]
         == [1] * n_useful_features_regression
@@ -268,7 +272,7 @@ def test_rfecv_plotting_exception_raise(
         selector.plot()
 
 
-def test_rfecv_set_min_features_to_select_base_case(
+def test_rfecv_set_n_features_to_select_base_case(
     x_y_classification_with_rand_columns_pandas,
     n_useful_features_classification,
     n_random_features,
@@ -283,7 +287,7 @@ def test_rfecv_set_min_features_to_select_base_case(
     )
     selector.set_output(transform="pandas")
     selector.fit(X_with_rand, y)
-    selector.set_min_features_to_select(n_useful_features_classification)
+    selector.set_n_features_to_select(n_useful_features_classification)
     assert (
         selector.support_
         == [True] * n_useful_features_classification + [False] * n_random_features
@@ -295,7 +299,7 @@ def test_rfecv_set_min_features_to_select_base_case(
     )
 
 
-def test_rfecv_set_min_features_to_select_exception_cases(
+def test_rfecv_set_n_features_to_select_exception_cases(
     random_state,
     n_useful_features_classification,
     cv,
@@ -310,12 +314,12 @@ def test_rfecv_set_min_features_to_select_exception_cases(
     selector.set_output(transform="pandas")
 
     with pytest.raises(NotFittedError):
-        selector.set_min_features_to_select(n_useful_features_classification)
+        selector.set_n_features_to_select(n_useful_features_classification)
 
     selector.fit(X_with_rand, y)
 
     with pytest.raises(ValueError):
-        selector.set_min_features_to_select(n_useful_features_classification - 1)
+        selector.set_n_features_to_select(n_useful_features_classification - 1)
 
     with pytest.raises(ValueError):
-        selector.set_min_features_to_select(X_with_rand.shape[0] + 1)
+        selector.set_n_features_to_select(X_with_rand.shape[0] + 1)

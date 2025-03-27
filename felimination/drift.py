@@ -320,7 +320,7 @@ class SampleSimilarityDriftRFE(FeliminationRFECV):
         features = np.arange(n_features)[support_]
 
         X_remaining_features, features = self._select_X_with_remaining_features(
-            X, support=support_, n_features=n_features
+            X, support=support_
         )
 
         scores_importances = parallel(
@@ -381,7 +381,7 @@ class SampleSimilarityDriftRFE(FeliminationRFECV):
             # Select remaining features
             features = np.arange(n_features)[support_]
             X_remaining_features, features = self._select_X_with_remaining_features(
-                X, support=support_, n_features=n_features
+                X, support=support_
             )
 
             if self.verbose > 0:
@@ -430,7 +430,7 @@ class SampleSimilarityDriftRFE(FeliminationRFECV):
         features = np.arange(n_features)[support_]
         self.clf_ = clone(self.clf)
         X_remaining_features, features = self._select_X_with_remaining_features(
-            X, support=support_, n_features=n_features
+            X, support=support_
         )
         self.clf_.fit(X_remaining_features, y, **fit_params)
 

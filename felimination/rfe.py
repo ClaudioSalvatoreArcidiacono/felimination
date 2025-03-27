@@ -28,6 +28,34 @@ from sklearn.utils.validation import check_is_fitted, validate_data
 from felimination.importance import PermutationImportance, _train_score_get_importance
 
 
+def select_best_by_mean_test_score_and_overfit(cv_results):
+    """Selects the best number of features based on the cv_results.
+
+    It selects the number of features that maximizes the mean test score and minimizes the overfit.
+
+    Parameters
+    ----------
+    cv_results : dict
+        Dictionary with the results of the cross-validation. It should have
+        the following keys:
+        - "mean_test_score": Mean of scores over the folds.
+        - "n_features": The number of features used at that step.
+
+    Returns
+    -------
+    int
+        The number of features that maximizes the mean test score.
+    """
+    cv_df = pd.DataFrame(cv_results)
+    cv_df["rank_mean_test_score"] = cv_df["mean_test_score"].rank(ascending=False)
+    cv_df["overfit"] = cv_df["mean_train_score"] - cv_df["mean_test_score"]
+    cv_df["rank_overfit"] = cv_df["overfit"].rank(ascending=True)
+    cv_df["rank_sum"] = cv_df["rank_mean_test_score"] + cv_df["rank_overfit"]
+    return cv_df.sort_values(["rank_sum", "mean_test_score"], ascending=[True, False])[
+        "n_features"
+    ].iloc[0]
+
+
 class FeliminationRFECV(RFECV):
     """Perform recursive feature elimination with cross-validation
     following scikit-learn standards.
@@ -119,7 +147,18 @@ class FeliminationRFECV(RFECV):
         If `callable`, overrides the default feature importance getter.
         The callable is passed with the fitted estimator and the validation set
         (X_val, y_val, estimator) and it should return importance for each feature.
-
+    callbacks : list of callable, default=None
+        List of callables to be called at the end of each step of the feature
+        selection. Each callable should accept two parameters: the selector
+        and the importances computed at that step. See an example of callbacks in the
+        [`callbacks`](/felimination/reference/callbacks) module.
+    best_iteration_selection_criteria : str or callable, default='mean_test_score'
+        The criteria to select the best number of features. If a string, it should be
+        one of the keys in the `cv_results_` attribute. If a callable, it should
+        accept the `cv_results_` dictionary and return the best number of features. Best number of
+        features must be one of the values in the `cv_results_["n_features"]` array.
+        See [`select_best_by_mean_test_score_and_overfit`](/felimination/reference/RFE/#felimination.rfe.select_best_by_mean_test_score_and_overfit)
+        for an example of a custom criteria.
 
     Attributes
     ----------
@@ -157,10 +196,6 @@ class FeliminationRFECV(RFECV):
         best) features are assigned rank 1.
     support_ : ndarray of shape (n_features,)
         The mask of selected features.
-    callbacks : list of callable, default=None
-        List of callables to be called at the end of each step of the feature
-        selection. Each callable should accept two parameters: the selector
-        and the importances computed at that step.
 
     Examples
     --------
@@ -216,9 +251,11 @@ class FeliminationRFECV(RFECV):
         n_jobs=None,
         importance_getter="auto",
         callbacks=None,
+        best_iteration_selection_criteria="mean_test_score",
     ) -> None:
         self.random_state = random_state
         self.callbacks = callbacks
+        self.best_iteration_selection_criteria = best_iteration_selection_criteria
         super().__init__(
             estimator,
             min_features_to_select=min_features_to_select,
@@ -231,7 +268,8 @@ class FeliminationRFECV(RFECV):
         )
 
     @staticmethod
-    def _select_X_with_remaining_features(X, support, n_features):
+    def _select_X_with_remaining_features(X, support):
+        n_features = X.shape[1]
         features = np.arange(n_features)[support]
         if isinstance(X, pd.DataFrame):
             feature_names = X.columns[support]
@@ -264,6 +302,29 @@ class FeliminationRFECV(RFECV):
             routed_params = Bunch(estimator=Bunch(fit=fit_params))
 
         return self._fit(X, y, groups, **routed_params.estimator.fit)
+
+    def select_best_iteration(self, cv_results):
+        """Selects the best number of features based on the cv_results.
+
+        Parameters
+        ----------
+        cv_results : dict
+            Dictionary with the results of the cross-validation. It should have
+            the following keys:
+            - "mean_test_score": Mean of scores over the folds.
+            - "n_features": The number of features used at that step.
+
+        Returns
+        -------
+        int
+            The number of features that maximizes the mean test score.
+        """
+        if callable(self.best_iteration_selection_criteria):
+            return self.best_iteration_selection_criteria(cv_results)
+        else:
+            return cv_results["n_features"][
+                np.argmax(cv_results[self.best_iteration_selection_criteria])
+            ]
 
     def _fit(self, X, y, groups, step_score=None, **fit_params):
         self._validate_params()
@@ -300,7 +361,7 @@ class FeliminationRFECV(RFECV):
         while current_number_of_features > min_features_to_select:
             # Select remaining features
             X_remaining_features, features = self._select_X_with_remaining_features(
-                X, support=support_, n_features=n_features
+                X, support=support_
             )
 
             if self.verbose > 0:
@@ -375,7 +436,7 @@ class FeliminationRFECV(RFECV):
 
         # Estimate performances of final model
         X_remaining_features, features = self._select_X_with_remaining_features(
-            X, support=support_, n_features=n_features
+            X, support=support_
         )
 
         cv_scores = cross_validate(
@@ -406,20 +467,24 @@ class FeliminationRFECV(RFECV):
             for callback in self.callbacks:
                 callback(self, cv_importances)
 
+        self.n_features_ = support_.sum()
+        self.support_ = support_
+        self.ranking_ = ranking_
+        self.cv_results_ = dict(self.cv_results_)
+
+        # Find the best number of features
+        best_n_features = self.select_best_iteration(self.cv_results_)
+        self.set_n_features_to_select(best_n_features)
         X_remaining_features, features = self._select_X_with_remaining_features(
-            X, support=support_, n_features=n_features
+            X, support=self.support_
         )
 
         self.estimator_ = clone(self.estimator)
         self.estimator_.fit(X_remaining_features, y, **fit_params)
 
-        self.n_features_ = support_.sum()
-        self.support_ = support_
-        self.ranking_ = ranking_
-        self.cv_results_ = dict(self.cv_results_)
         return self
 
-    def set_min_features_to_select(self, min_features_to_select):
+    def set_n_features_to_select(self, min_features_to_select):
         """Changes the number of features to select after fitting.
 
         The underlying estimator **will not be retrained**. So this method will not
@@ -471,6 +536,10 @@ class FeliminationRFECV(RFECV):
             The axis where the plot has been plotted.
         """
         check_is_fitted(self)
+        best_n_of_features = self.select_best_iteration(self.cv_results_)
+        best_index = self.cv_results_["n_features"].index(best_n_of_features)
+        best_train_score = self.cv_results_["mean_train_score"][best_index]
+        best_test_score = self.cv_results_["mean_test_score"][best_index]
         df = pd.DataFrame(self.cv_results_)
         split_score_cols = [col for col in df if "split" in col]
         df_long_form = df[split_score_cols + ["n_features"]].melt(
@@ -491,10 +560,34 @@ class FeliminationRFECV(RFECV):
             hue_order=["validation", "train"],
             style_order=["validation", "train"],
             seed=self.random_state,
+            zorder=0,
         )
         lineplot_kwargs.update(**kwargs)
         ax = sns.lineplot(data=df_long_form, **lineplot_kwargs)
         ax.set_xticks(df.n_features)
+        ax.plot(
+            best_n_of_features,
+            best_test_score,
+            color="red",
+            label=f"Best Iteration",
+            zorder=1,
+            marker="*",
+            markersize=10,
+            markeredgewidth=2,
+            markeredgecolor="red",
+            fillstyle="none",
+        )
+        ax.legend()
+        ax.set_title(
+            "\n".join(
+                (
+                    "RFECV Plot",
+                    f"Best Number of Features: {best_n_of_features}",
+                    f"Best Test Score: {best_test_score:.3f}",
+                    f"Best Train Score: {best_train_score:.3f}",
+                )
+            )
+        )
         return ax
 
 
@@ -596,7 +689,15 @@ class PermutationImportanceRFECV(FeliminationRFECV):
     callbacks : list of callable, default=None
         List of callables to be called at the end of each step of the feature
         selection. Each callable should accept two parameters: the selector
-        and the importances computed at that step.
+        and the importances computed at that step. See an example of callbacks in the
+        [`callbacks`](/felimination/reference/callbacks) module.
+    best_iteration_selection_criteria : str or callable, default='mean_test_score'
+        The criteria to select the best number of features. If a string, it should be
+        one of the keys in the `cv_results_` attribute. If a callable, it should
+        accept the `cv_results_` dictionary and return the best number of features. Best number of
+        features must be one of the values in the `cv_results_["n_features"]` array.
+        See [`select_best_by_mean_test_score_and_overfit`](/felimination/reference/RFE/#felimination.rfe.select_best_by_mean_test_score_and_overfit)
+        for an example of a custom criteria.
 
 
     Attributes
@@ -675,6 +776,7 @@ class PermutationImportanceRFECV(FeliminationRFECV):
         sample_weight=None,
         max_samples=1.0,
         callbacks=None,
+        best_iteration_selection_criteria="mean_test_score",
     ) -> None:
         self.n_repeats = n_repeats
         self.sample_weight = sample_weight
@@ -698,4 +800,5 @@ class PermutationImportanceRFECV(FeliminationRFECV):
                 sample_weight=sample_weight,
                 max_samples=max_samples,
             ),
+            best_iteration_selection_criteria=best_iteration_selection_criteria,
         )
