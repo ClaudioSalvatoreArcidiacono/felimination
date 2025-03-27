@@ -22,8 +22,8 @@ from sklearn.model_selection import check_cv, cross_validate
 from sklearn.utils import Bunch
 from sklearn.utils._metadata_requests import _routing_enabled, process_routing
 from sklearn.utils._param_validation import HasMethods, Interval, RealNotInt
-from sklearn.utils.validation import check_is_fitted, validate_data
 from sklearn.utils._tags import get_tags
+from sklearn.utils.validation import check_is_fitted, validate_data
 
 from felimination.importance import PermutationImportance, _train_score_get_importance
 from felimination.utils.parallel import Parallel, delayed

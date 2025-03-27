@@ -37,6 +37,7 @@ from numbers import Integral
 
 import numpy as np
 
+
 try:
     import pandas as pd
 except ImportError:
@@ -45,13 +46,12 @@ from joblib import effective_n_jobs
 from sklearn.base import ClassifierMixin, clone
 from sklearn.metrics import check_scoring
 from sklearn.model_selection import check_cv
-from sklearn.utils._tags import _safe_tags
+from sklearn.utils._tags import _safe_tags, get_tags
 from sklearn.utils.validation import validate_data
 
 from felimination.importance import PermutationImportance
 from felimination.rfe import FeliminationRFECV, _train_score_get_importance
 from felimination.utils.parallel import Parallel, delayed
-from sklearn.utils._tags import get_tags
 
 
 class SampleSimilarityDriftRFE(FeliminationRFECV):

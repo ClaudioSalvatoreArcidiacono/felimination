@@ -6,7 +6,7 @@ import pytest
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import ShuffleSplit
 
-from felimination.drift import SampleSimilarityDriftRFE, PermImpSampleSimilarityDriftRFE
+from felimination.drift import PermImpSampleSimilarityDriftRFE, SampleSimilarityDriftRFE
 from felimination.importance import PermutationImportance
 
 

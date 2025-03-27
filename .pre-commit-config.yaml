@@ -14,6 +14,13 @@ repos:
     - id: black
 -   repo: local
     hooks:
+      - id: isort
+        name: sort imports
+        entry: isort
+        require_serial: true
+        language: system
+-   repo: local
+    hooks:
     - id: flake8
       name: Run flake8
       entry: flake8

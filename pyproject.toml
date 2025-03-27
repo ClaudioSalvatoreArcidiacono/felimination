@@ -27,6 +27,7 @@ dev = [
     "flake8",
     "pre-commit",
     "pytest",
+    "isort>=6.0.1",
 ]
 doc = [
     "mkdocs",
@@ -67,3 +68,8 @@ exclude = '''
 
 [tool.flake8]
 max-line-length = 88
+
+[tool.isort]
+profile = "black"
+lines_after_imports = 2
+group_by_package = true

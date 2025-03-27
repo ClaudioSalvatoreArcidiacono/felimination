@@ -27,10 +27,11 @@ pip install felimination
 In this section it will be illustrated how to use the `PermutationImportanceRFECV` class.
 
 ```python
-from felimination.rfe import PermutationImportanceRFECV
-from sklearn.linear_model import LogisticRegression
-from sklearn.datasets import make_classification
 import numpy as np
+from sklearn.datasets import make_classification
+from sklearn.linear_model import LogisticRegression
+
+from felimination.rfe import PermutationImportanceRFECV
 
 
 X, y = make_classification(
@@ -71,10 +72,12 @@ selector.support_
 In this section it will be illustrated how to use the `HybridImportanceGACVFeatureSelector` class.
 
 ```python
-from felimination.ga import HybridImportanceGACVFeatureSelector
-from sklearn.linear_model import LogisticRegression
-from sklearn.datasets import make_classification
 import numpy as np
+from sklearn.datasets import make_classification
+from sklearn.linear_model import LogisticRegression
+
+from felimination.ga import HybridImportanceGACVFeatureSelector
+
 
 # Create dummy dataset
 X, y = make_classification(
