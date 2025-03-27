@@ -36,12 +36,7 @@ from collections import defaultdict
 from numbers import Integral
 
 import numpy as np
-
-
-try:
-    import pandas as pd
-except ImportError:
-    pass
+import pandas as pd
 from joblib import Parallel, delayed, effective_n_jobs
 from sklearn.base import ClassifierMixin, clone
 from sklearn.metrics import check_scoring
