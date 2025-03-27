@@ -10,18 +10,18 @@ from typing import Any, Iterable
 import numpy as np
 import pandas as pd
 import seaborn as sns
-from joblib import effective_n_jobs
+from joblib import Parallel, delayed, effective_n_jobs
 from sklearn.base import BaseEstimator, MetaEstimatorMixin, clone, is_classifier
 from sklearn.feature_selection import SelectorMixin
 from sklearn.linear_model._logistic import LogisticRegression
 from sklearn.metrics import check_scoring
 from sklearn.model_selection import check_cv
 from sklearn.utils._param_validation import HasMethods, Interval, RealNotInt
+from sklearn.utils._tags import get_tags
 from sklearn.utils.metaestimators import available_if
-from sklearn.utils.validation import check_is_fitted
+from sklearn.utils.validation import check_is_fitted, validate_data
 
 from felimination.importance import _train_score_get_importance
-from felimination.utils.parallel import Parallel, delayed
 
 
 def _estimator_has(attr):
@@ -547,13 +547,13 @@ class HybridImportanceGACVFeatureSelector(
             Fitted estimator.
         """
         self._validate_params()
-        tags = self._get_tags()
-        self._validate_data(
+        validate_data(
+            self,
             X,
             y,
             accept_sparse="csc",
             ensure_min_features=2,
-            force_all_finite=not tags.get("allow_nan", True),
+            ensure_all_finite=not get_tags(self.estimator).input_tags.allow_nan,
             multi_output=True,
             dtype=None,
         )
@@ -801,15 +801,9 @@ class HybridImportanceGACVFeatureSelector(
         check_is_fitted(self)
         return self.estimator_.predict_log_proba(self.transform(X))
 
-    def _more_tags(self):
-        tags = {
-            "poor_score": True,
-            "requires_y": True,
-            "allow_nan": True,
-        }
-
-        # Adjust allow_nan if estimator explicitly defines `allow_nan`.
-        if hasattr(self.estimator, "_get_tags"):
-            tags["allow_nan"] = self.estimator._get_tags()["allow_nan"]
-
+    def __sklearn_tags__(self):
+        tags = super().__sklearn_tags__()
+        sub_estimator_tags = get_tags(self.estimator)
+        tags.target_tags.required = False
+        tags.input_tags.allow_nan = sub_estimator_tags.input_tags.allow_nan
         return tags

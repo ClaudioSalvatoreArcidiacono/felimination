@@ -13,7 +13,7 @@ from numbers import Integral
 import numpy as np
 import pandas as pd
 import seaborn as sns
-from joblib import effective_n_jobs
+from joblib import Parallel, delayed, effective_n_jobs
 from sklearn.base import BaseEstimator, clone, is_classifier
 from sklearn.feature_selection import RFECV
 from sklearn.linear_model._logistic import LogisticRegression
@@ -26,7 +26,6 @@ from sklearn.utils._tags import get_tags
 from sklearn.utils.validation import check_is_fitted, validate_data
 
 from felimination.importance import PermutationImportance, _train_score_get_importance
-from felimination.utils.parallel import Parallel, delayed
 
 
 class FeliminationRFECV(RFECV):
@@ -274,8 +273,9 @@ class FeliminationRFECV(RFECV):
             y,
             accept_sparse="csc",
             ensure_min_features=2,
-            ensure_all_finite=False,
+            ensure_all_finite=not get_tags(self.estimator).input_tags.allow_nan,
             multi_output=True,
+            dtype=None,
         )
 
         # Initialization

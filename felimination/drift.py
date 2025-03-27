@@ -42,7 +42,7 @@ try:
     import pandas as pd
 except ImportError:
     pass
-from joblib import effective_n_jobs
+from joblib import Parallel, delayed, effective_n_jobs
 from sklearn.base import ClassifierMixin, clone
 from sklearn.metrics import check_scoring
 from sklearn.model_selection import check_cv
@@ -51,7 +51,6 @@ from sklearn.utils.validation import validate_data
 
 from felimination.importance import PermutationImportance
 from felimination.rfe import FeliminationRFECV, _train_score_get_importance
-from felimination.utils.parallel import Parallel, delayed
 
 
 class SampleSimilarityDriftRFE(FeliminationRFECV):
@@ -274,10 +273,11 @@ class SampleSimilarityDriftRFE(FeliminationRFECV):
         validate_data(
             self,
             X,
+            y,
             accept_sparse="csc",
-            dtype=None,
             ensure_min_features=2,
-            ensure_all_finite=False,
+            ensure_all_finite=not get_tags(self.estimator).input_tags.allow_nan,
+            dtype=None,
         )
 
         if isinstance(self.split_col, str):

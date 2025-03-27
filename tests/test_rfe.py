@@ -161,6 +161,39 @@ def test_perm_imp_rfecv_classification_base_case_pandas(
     ).all()
 
 
+def test_perm_imp_rfecv_n_jobs(
+    x_y_classification_with_rand_columns_pandas,
+    n_useful_features_classification,
+    n_random_features,
+    cv,
+    random_state,
+):
+    X_with_rand, y = x_y_classification_with_rand_columns_pandas
+    ct = ColumnTransformer(
+        [
+            ("scaler", StandardScaler(), ["x1"]),
+        ],
+        remainder="passthrough",
+    )
+    estimator = Pipeline([("ct", ct), ("lr", LogisticRegression(random_state=42))])
+    selector = PermutationImportanceRFECV(
+        estimator,
+        cv=cv,
+        min_features_to_select=n_useful_features_classification,
+        n_jobs=-1,
+    )
+
+    selector.fit(X_with_rand, y)
+    assert (
+        selector.ranking_[:n_useful_features_classification]
+        == [1] * n_useful_features_classification
+    ).all()
+    assert (
+        selector.support_
+        == [True] * n_useful_features_classification + [False] * n_random_features
+    ).all()
+
+
 def test_float_step_param(
     x_y_classification_with_rand_columns_pandas,
     n_useful_features_classification,
