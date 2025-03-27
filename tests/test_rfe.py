@@ -8,6 +8,7 @@ from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.model_selection import ShuffleSplit
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
+from sklearn.utils._tags import get_tags
 
 from felimination.rfe import PermutationImportanceRFECV
 
@@ -114,7 +115,7 @@ def test_perm_imp_rfecv_classification_base_case_np_arrays(
     selector = PermutationImportanceRFECV(
         LogisticRegression(random_state=random_state),
         cv=cv,
-        n_features_to_select=n_useful_features_classification,
+        min_features_to_select=n_useful_features_classification,
     )
 
     selector.fit(X_with_rand, y)
@@ -146,7 +147,40 @@ def test_perm_imp_rfecv_classification_base_case_pandas(
     selector = PermutationImportanceRFECV(
         estimator,
         cv=cv,
-        n_features_to_select=n_useful_features_classification,
+        min_features_to_select=n_useful_features_classification,
+    )
+
+    selector.fit(X_with_rand, y)
+    assert (
+        selector.ranking_[:n_useful_features_classification]
+        == [1] * n_useful_features_classification
+    ).all()
+    assert (
+        selector.support_
+        == [True] * n_useful_features_classification + [False] * n_random_features
+    ).all()
+
+
+def test_perm_imp_rfecv_n_jobs(
+    x_y_classification_with_rand_columns_pandas,
+    n_useful_features_classification,
+    n_random_features,
+    cv,
+    random_state,
+):
+    X_with_rand, y = x_y_classification_with_rand_columns_pandas
+    ct = ColumnTransformer(
+        [
+            ("scaler", StandardScaler(), ["x1"]),
+        ],
+        remainder="passthrough",
+    )
+    estimator = Pipeline([("ct", ct), ("lr", LogisticRegression(random_state=42))])
+    selector = PermutationImportanceRFECV(
+        estimator,
+        cv=cv,
+        min_features_to_select=n_useful_features_classification,
+        n_jobs=-1,
     )
 
     selector.fit(X_with_rand, y)
@@ -170,7 +204,7 @@ def test_float_step_param(
     selector = PermutationImportanceRFECV(
         LogisticRegression(random_state=random_state),
         cv=cv,
-        n_features_to_select=n_useful_features_classification,
+        min_features_to_select=n_useful_features_classification,
         step=0.3,
     )
 
@@ -186,7 +220,7 @@ def test_perm_imp_rfecv_regression_base_case_np_arrays(
 ):
     X_with_rand, y = x_y_regression_with_rand_columns_arrays
     selector = PermutationImportanceRFECV(
-        LinearRegression(), cv=cv, n_features_to_select=n_useful_features_regression
+        LinearRegression(), cv=cv, min_features_to_select=n_useful_features_regression
     )
 
     selector.fit(X_with_rand, y)
@@ -208,7 +242,7 @@ def test_perm_imp_rfecv_regression_base_case_pandas(
 ):
     X_with_rand, y = x_y_regression_with_rand_columns_pandas
     selector = PermutationImportanceRFECV(
-        LinearRegression(), cv=cv, n_features_to_select=n_useful_features_regression
+        LinearRegression(), cv=cv, min_features_to_select=n_useful_features_regression
     )
 
     selector.fit(X_with_rand, y)
@@ -234,7 +268,7 @@ def test_rfecv_plotting_exception_raise(
         selector.plot()
 
 
-def test_rfecv_set_n_features_to_select_base_case(
+def test_rfecv_set_min_features_to_select_base_case(
     x_y_classification_with_rand_columns_pandas,
     n_useful_features_classification,
     n_random_features,
@@ -245,11 +279,11 @@ def test_rfecv_set_n_features_to_select_base_case(
     selector = PermutationImportanceRFECV(
         LogisticRegression(random_state=random_state),
         cv=cv,
-        n_features_to_select=1,
+        min_features_to_select=1,
     )
     selector.set_output(transform="pandas")
     selector.fit(X_with_rand, y)
-    selector.set_n_features_to_select(n_useful_features_classification)
+    selector.set_min_features_to_select(n_useful_features_classification)
     assert (
         selector.support_
         == [True] * n_useful_features_classification + [False] * n_random_features
@@ -261,7 +295,7 @@ def test_rfecv_set_n_features_to_select_base_case(
     )
 
 
-def test_rfecv_set_n_features_to_select_exception_cases(
+def test_rfecv_set_min_features_to_select_exception_cases(
     random_state,
     n_useful_features_classification,
     cv,
@@ -271,17 +305,17 @@ def test_rfecv_set_n_features_to_select_exception_cases(
     selector = PermutationImportanceRFECV(
         LogisticRegression(random_state=random_state),
         cv=cv,
-        n_features_to_select=n_useful_features_classification,
+        min_features_to_select=n_useful_features_classification,
     )
     selector.set_output(transform="pandas")
 
     with pytest.raises(NotFittedError):
-        selector.set_n_features_to_select(n_useful_features_classification)
+        selector.set_min_features_to_select(n_useful_features_classification)
 
     selector.fit(X_with_rand, y)
 
     with pytest.raises(ValueError):
-        selector.set_n_features_to_select(n_useful_features_classification - 1)
+        selector.set_min_features_to_select(n_useful_features_classification - 1)
 
     with pytest.raises(ValueError):
-        selector.set_n_features_to_select(X_with_rand.shape[0] + 1)
+        selector.set_min_features_to_select(X_with_rand.shape[0] + 1)

@@ -10,18 +10,18 @@ from typing import Any, Iterable
 import numpy as np
 import pandas as pd
 import seaborn as sns
-from joblib import effective_n_jobs
+from joblib import Parallel, delayed, effective_n_jobs
 from sklearn.base import BaseEstimator, MetaEstimatorMixin, clone, is_classifier
 from sklearn.feature_selection import SelectorMixin
 from sklearn.linear_model._logistic import LogisticRegression
 from sklearn.metrics import check_scoring
 from sklearn.model_selection import check_cv
 from sklearn.utils._param_validation import HasMethods, Interval, RealNotInt
+from sklearn.utils._tags import get_tags
 from sklearn.utils.metaestimators import available_if
-from sklearn.utils.validation import check_is_fitted
+from sklearn.utils.validation import check_is_fitted, validate_data
 
 from felimination.importance import _train_score_get_importance
-from felimination.utils.parallel import Parallel, delayed
 
 
 def _estimator_has(attr):
@@ -206,7 +206,7 @@ class HybridImportanceGACVFeatureSelector(
         If `callable`, overrides the default feature importance getter.
         The callable is passed with the fitted estimator and the validation set
         (X_val, y_val, estimator) and it should return importance for each feature.
-    min_n_features_to_select : int or float, default=1
+    min_features_to_select : int or float, default=1
         The minimum number of features to select. If float, it represents the
         fraction of features to select.
     init_avg_features_num : float, default=15
@@ -307,7 +307,7 @@ class HybridImportanceGACVFeatureSelector(
 
     _parameter_constraints: dict = {
         "estimator": [HasMethods(["fit"])],
-        "min_n_features_to_select": [
+        "min_features_to_select": [
             None,
             Interval(RealNotInt, 0, 1, closed="right"),
             Interval(Integral, 0, None, closed="neither"),
@@ -337,7 +337,7 @@ class HybridImportanceGACVFeatureSelector(
         random_state=None,
         n_jobs=None,
         importance_getter="auto",
-        min_n_features_to_select=1,
+        min_features_to_select=1,
         init_avg_features_num=15,
         init_std_features_num=5,
         pool_size=20,
@@ -358,7 +358,7 @@ class HybridImportanceGACVFeatureSelector(
         self.random_state = random_state
         self.n_jobs = n_jobs
         self.importance_getter = importance_getter
-        self.min_n_features_to_select = min_n_features_to_select
+        self.min_features_to_select = min_features_to_select
         self.init_avg_features_num = init_avg_features_num
         self.init_std_features_num = init_std_features_num
         self.pool_size = pool_size
@@ -493,7 +493,7 @@ class HybridImportanceGACVFeatureSelector(
             number_of_features = max(
                 len(element["features"])
                 + np.random.randint(*self.range_change_n_features_mutation),
-                self.min_n_features_to_select,
+                self.min_features_to_select,
             )
 
             # Replace the least important features with random features
@@ -547,13 +547,13 @@ class HybridImportanceGACVFeatureSelector(
             Fitted estimator.
         """
         self._validate_params()
-        tags = self._get_tags()
-        self._validate_data(
+        validate_data(
+            self,
             X,
             y,
             accept_sparse="csc",
             ensure_min_features=2,
-            force_all_finite=not tags.get("allow_nan", True),
+            ensure_all_finite=not get_tags(self.estimator).input_tags.allow_nan,
             multi_output=True,
             dtype=None,
         )
@@ -562,12 +562,12 @@ class HybridImportanceGACVFeatureSelector(
         cv = check_cv(self.cv, y, classifier=is_classifier(self.estimator))
         scorer = check_scoring(self.estimator, scoring=self.scoring)
         n_features = X.shape[1]
-        if self.min_n_features_to_select is None:
-            min_n_features_to_select = n_features // 2
-        elif isinstance(self.min_n_features_to_select, Integral):  # int
-            min_n_features_to_select = self.min_n_features_to_select
+        if self.min_features_to_select is None:
+            min_features_to_select = n_features // 2
+        elif isinstance(self.min_features_to_select, Integral):  # int
+            min_features_to_select = self.min_features_to_select
         else:  # float
-            min_n_features_to_select = int(n_features * self.min_n_features_to_select)
+            min_features_to_select = int(n_features * self.min_features_to_select)
 
         if isinstance(X, pd.DataFrame):
             all_features = X.columns.to_list()
@@ -590,7 +590,7 @@ class HybridImportanceGACVFeatureSelector(
                                         self.init_std_features_num,
                                     )
                                 ),
-                                min_n_features_to_select,
+                                min_features_to_select,
                             ),
                             n_features,
                         ),
@@ -801,15 +801,9 @@ class HybridImportanceGACVFeatureSelector(
         check_is_fitted(self)
         return self.estimator_.predict_log_proba(self.transform(X))
 
-    def _more_tags(self):
-        tags = {
-            "poor_score": True,
-            "requires_y": True,
-            "allow_nan": True,
-        }
-
-        # Adjust allow_nan if estimator explicitly defines `allow_nan`.
-        if hasattr(self.estimator, "_get_tags"):
-            tags["allow_nan"] = self.estimator._get_tags()["allow_nan"]
-
+    def __sklearn_tags__(self):
+        tags = super().__sklearn_tags__()
+        sub_estimator_tags = get_tags(self.estimator)
+        tags.target_tags.required = False
+        tags.input_tags.allow_nan = sub_estimator_tags.input_tags.allow_nan
         return tags

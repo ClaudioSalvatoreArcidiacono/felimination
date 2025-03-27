@@ -3,15 +3,14 @@ import pandas as pd
 import pytest
 from sklearn.datasets import make_classification, make_friedman1
 from sklearn.linear_model import LinearRegression, LogisticRegression
-from sklearn.model_selection import RepeatedStratifiedKFold, RepeatedKFold
-
-from felimination.importance import PermutationImportance
+from sklearn.model_selection import RepeatedKFold, RepeatedStratifiedKFold
 
 from felimination.ga import (
     HybridImportanceGACVFeatureSelector,
     rank_mean_test_score_fitness,
     rank_mean_test_score_overfit_fitness,
 )
+from felimination.importance import PermutationImportance
 
 
 @pytest.fixture(scope="session")

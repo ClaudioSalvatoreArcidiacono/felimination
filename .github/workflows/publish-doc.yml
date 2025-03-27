@@ -9,14 +9,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Check out repository
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
-    - name: Set up Python 3.10
-      uses: actions/setup-python@v4
+    - name: Install uv
+      uses: astral-sh/setup-uv@v5
       with:
-        python-version: "3.10"
+        version: "0.6.10"
+
+    - name: "Set up Python"
+      uses: actions/setup-python@v5
+      with:
+        python-version-file: "pyproject.toml"
+
+    - name: Install the project and devs
+      run: uv sync --group doc
 
     - name: Publish Documentation to github pages
       run: |
-        pip install '.[doc]'
-        mkdocs gh-deploy --force --clean --verbose
+        uv run mkdocs gh-deploy --force --clean --verbose

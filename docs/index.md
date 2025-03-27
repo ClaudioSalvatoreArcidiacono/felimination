@@ -5,11 +5,11 @@ This library contains some useful scikit-learn compatible classes for feature se
 ## Features
 
 - [Recursive Feature Elimination with Cross Validation using Permutation Importance](reference/RFE.md#felimination.rfe.PermutationImportanceRFECV)
-- [Hybrid Genetic Algorithms x Feature Importance selection](/reference/genetic_algorithms/#felimination.ga.HybridImportanceGACVFeatureSelector)
+- [Hybrid Genetic Algorithms x Feature Importance selection](reference/genetic_algorithms/#felimination.ga.HybridImportanceGACVFeatureSelector)
 
 ## Requirements
 
-- Python 3.7+
+- Python 3.10+
 - NumPy
 - Scikit-learn
 - Pandas
@@ -27,10 +27,11 @@ pip install felimination
 In this section it will be illustrated how to use the `PermutationImportanceRFECV` class.
 
 ```python
-from felimination.rfe import PermutationImportanceRFECV
-from sklearn.linear_model import LogisticRegression
-from sklearn.datasets import make_classification
 import numpy as np
+from sklearn.datasets import make_classification
+from sklearn.linear_model import LogisticRegression
+
+from felimination.rfe import PermutationImportanceRFECV
 
 
 X, y = make_classification(
@@ -71,10 +72,12 @@ selector.support_
 In this section it will be illustrated how to use the `HybridImportanceGACVFeatureSelector` class.
 
 ```python
-from felimination.ga import HybridImportanceGACVFeatureSelector
-from sklearn.linear_model import LogisticRegression
-from sklearn.datasets import make_classification
 import numpy as np
+from sklearn.datasets import make_classification
+from sklearn.linear_model import LogisticRegression
+
+from felimination.ga import HybridImportanceGACVFeatureSelector
+
 
 # Create dummy dataset
 X, y = make_classification(

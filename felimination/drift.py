@@ -36,14 +36,15 @@ from collections import defaultdict
 from numbers import Integral
 
 import numpy as np
-from joblib import effective_n_jobs
+import pandas as pd
+from joblib import Parallel, delayed, effective_n_jobs
 from sklearn.base import ClassifierMixin, clone
 from sklearn.metrics import check_scoring
 from sklearn.model_selection import check_cv
-from sklearn.utils._tags import _safe_tags
+from sklearn.utils._tags import _safe_tags, get_tags
+from sklearn.utils.validation import validate_data
 
 from felimination.importance import PermutationImportance
-from felimination.utils.parallel import Parallel, delayed
 from felimination.rfe import FeliminationRFECV, _train_score_get_importance
 
 
@@ -57,7 +58,7 @@ class SampleSimilarityDriftRFE(FeliminationRFECV):
     create target array y2 for X2 as an array of ones
     vertically concatenate X1, X2 and y1 and y2, obtaining X_ss and y_ss
     Calculate Cross-validation performances of the estimator on X_ss and y_ss.
-    while cross-validation-performances > max_score and n_features > min_n_features_to_select:
+    while cross-validation-performances > max_score and n_features > min_features_to_select:
         Discard most important features
         Calculate Cross-validation performances of the estimator on X_ss and y_ss using the new feature set.
     ```
@@ -77,7 +78,7 @@ class SampleSimilarityDriftRFE(FeliminationRFECV):
         Stops the feature selection procedure when the
         cross-validation score of the sample similarity classifier is
         lower than `max_score`.
-    min_n_features_to_select : int or float, default=1
+    min_features_to_select : int or float, default=1
         The minimum number of features to select. If `None`, half of the features are
         selected. If integer, the parameter is the absolute number of features
         to select. If float between 0 and 1, it is the fraction of the features to
@@ -181,7 +182,7 @@ class SampleSimilarityDriftRFE(FeliminationRFECV):
         *,
         step=1,
         max_score=0.55,
-        min_n_features_to_select=1,
+        min_features_to_select=1,
         split_col=0,
         split_value=None,
         split_frac=0.5,
@@ -198,11 +199,10 @@ class SampleSimilarityDriftRFE(FeliminationRFECV):
         self.split_value = split_value
         self.split_unique_values = split_unique_values
         self.split_frac = split_frac
-        self.min_n_features_to_select = min_n_features_to_select
         self.clf = clf
         super().__init__(
             estimator=clf,
-            n_features_to_select=min_n_features_to_select,
+            min_features_to_select=min_features_to_select,
             step=step,
             cv=cv,
             scoring=scoring,
@@ -216,7 +216,10 @@ class SampleSimilarityDriftRFE(FeliminationRFECV):
         X1, X2 = self._split_X(X, split_col_values)
         y1 = np.zeros((X1.shape[0],))
         y2 = np.ones((X2.shape[0],))
-        X = np.vstack((X1, X2))
+        if isinstance(X, np.ndarray):
+            X = np.vstack((X1, X2))
+        else:
+            X = pd.concat([X1, X2])
         y = np.concatenate((y1, y2))
         return X, y
 
@@ -230,8 +233,13 @@ class SampleSimilarityDriftRFE(FeliminationRFECV):
             split_value = np.quantile(split_col_values, self.split_frac)
 
         mask = split_col_values >= split_value
-        X1 = X[mask]
-        X2 = X[~mask]
+
+        if isinstance(X, np.ndarray):
+            X1 = X[mask]
+            X2 = X[~mask]
+        else:
+            X1 = X.loc[mask]
+            X2 = X.loc[~mask]
         return X1, X2
 
     def fit(self, X, y=None, groups=None, **fit_params):
@@ -257,20 +265,27 @@ class SampleSimilarityDriftRFE(FeliminationRFECV):
             Fitted selector.
         """
         self._validate_params()
-        tags = self._get_tags()
-        X = self._validate_data(
+        validate_data(
+            self,
             X,
             y,
             accept_sparse="csc",
             ensure_min_features=2,
-            force_all_finite=not tags.get("allow_nan", True),
+            ensure_all_finite=not get_tags(self.estimator).input_tags.allow_nan,
             dtype=None,
         )
+
         if isinstance(self.split_col, str):
             split_col_idx = list(self.feature_names_in_).index(self.split_col)
         else:
             split_col_idx = self.split_col
-        split_col_values = X[:, split_col_idx]
+
+        if isinstance(X, np.ndarray):
+            split_col_values = X[:, split_col_idx]
+        else:
+            split_col_name = X.columns[split_col_idx]
+            split_col_values = X[split_col_name].values
+
         X, y = self._build_sample_similarity_x_y(X, split_col_values=split_col_values)
 
         # Initialization
@@ -278,12 +293,12 @@ class SampleSimilarityDriftRFE(FeliminationRFECV):
         scorer = check_scoring(self.clf, scoring=self.scoring)
         n_features = X.shape[1]
 
-        if self.min_n_features_to_select is None:
-            min_n_features_to_select = n_features // 2
-        elif isinstance(self.min_n_features_to_select, Integral):  # int
-            min_n_features_to_select = self.min_n_features_to_select
+        if self.min_features_to_select is None:
+            min_features_to_select = n_features // 2
+        elif isinstance(self.min_features_to_select, Integral):  # int
+            min_features_to_select = self.min_features_to_select
         else:  # float
-            min_n_features_to_select = int(n_features * self.min_n_features_to_select)
+            min_features_to_select = int(n_features * self.min_features_to_select)
 
         support_ = np.ones(n_features, dtype=bool)
         support_[split_col_idx] = False
@@ -303,7 +318,10 @@ class SampleSimilarityDriftRFE(FeliminationRFECV):
             func = delayed(_train_score_get_importance)
 
         features = np.arange(n_features)[support_]
-        X_remaining_features = X[:, features]
+
+        X_remaining_features, features = self._select_X_with_remaining_features(
+            X, support=support_, n_features=n_features
+        )
 
         scores_importances = parallel(
             func(
@@ -342,7 +360,7 @@ class SampleSimilarityDriftRFE(FeliminationRFECV):
         # Elimination
         while (
             np.mean(test_scores_per_fold) > self.max_score
-            and current_number_of_features > min_n_features_to_select
+            and current_number_of_features > min_features_to_select
         ):
             features = np.arange(n_features)[support_]
             if 0.0 < self.step < 1.0:
@@ -350,7 +368,7 @@ class SampleSimilarityDriftRFE(FeliminationRFECV):
             else:
                 step = int(self.step)
             # Eliminate most important features
-            threshold = min(step, current_number_of_features - min_n_features_to_select)
+            threshold = min(step, current_number_of_features - min_features_to_select)
             cv_importances = [
                 score_importance[2] for score_importance in scores_importances
             ]
@@ -362,7 +380,9 @@ class SampleSimilarityDriftRFE(FeliminationRFECV):
             current_number_of_features = np.sum(support_)
             # Select remaining features
             features = np.arange(n_features)[support_]
-            X_remaining_features = X[:, features]
+            X_remaining_features, features = self._select_X_with_remaining_features(
+                X, support=support_, n_features=n_features
+            )
 
             if self.verbose > 0:
                 print("Fitting clf with %d features." % current_number_of_features)
@@ -409,7 +429,10 @@ class SampleSimilarityDriftRFE(FeliminationRFECV):
 
         features = np.arange(n_features)[support_]
         self.clf_ = clone(self.clf)
-        self.clf_.fit(X[:, features], y, **fit_params)
+        X_remaining_features, features = self._select_X_with_remaining_features(
+            X, support=support_, n_features=n_features
+        )
+        self.clf_.fit(X_remaining_features, y, **fit_params)
 
         self.n_features_ = support_.sum()
         self.support_ = support_
@@ -417,12 +440,12 @@ class SampleSimilarityDriftRFE(FeliminationRFECV):
         self.cv_results_ = dict(self.cv_results_)
         return self
 
-    def _more_tags(self):
-        return {
-            "poor_score": True,
-            "allow_nan": _safe_tags(self.clf, key="allow_nan"),
-            "requires_y": False,
-        }
+    def __sklearn_tags__(self):
+        tags = super().__sklearn_tags__()
+        sub_estimator_tags = get_tags(self.estimator)
+        tags.target_tags.required = False
+        tags.input_tags.allow_nan = sub_estimator_tags.input_tags.allow_nan
+        return tags
 
 
 class PermImpSampleSimilarityDriftRFE(SampleSimilarityDriftRFE):
@@ -474,7 +497,7 @@ class PermImpSampleSimilarityDriftRFE(SampleSimilarityDriftRFE):
         Stops the feature selection procedure when the
         cross-validation score of the sample similarity classifier is
         lower than `max_score`.
-    min_n_features_to_select : int or float, default=1
+    min_features_to_select : int or float, default=1
         The minimum number of features to select. If `None`, half of the features are
         selected. If integer, the parameter is the absolute number of features
         to select. If float between 0 and 1, it is the fraction of the features to
@@ -581,7 +604,7 @@ class PermImpSampleSimilarityDriftRFE(SampleSimilarityDriftRFE):
         *,
         step=1,
         max_score=0.55,
-        min_n_features_to_select=1,
+        min_features_to_select=1,
         split_col=0,
         split_value=None,
         split_frac=0.5,
@@ -601,7 +624,7 @@ class PermImpSampleSimilarityDriftRFE(SampleSimilarityDriftRFE):
         super().__init__(
             clf=clf,
             max_score=max_score,
-            min_n_features_to_select=min_n_features_to_select,
+            min_features_to_select=min_features_to_select,
             split_col=split_col,
             split_value=split_value,
             split_frac=split_frac,

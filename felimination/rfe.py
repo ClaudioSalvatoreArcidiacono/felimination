@@ -13,23 +13,22 @@ from numbers import Integral
 import numpy as np
 import pandas as pd
 import seaborn as sns
-from joblib import effective_n_jobs
+from joblib import Parallel, delayed, effective_n_jobs
 from sklearn.base import BaseEstimator, clone, is_classifier
-from sklearn.feature_selection import RFE
+from sklearn.feature_selection import RFECV
 from sklearn.linear_model._logistic import LogisticRegression
 from sklearn.metrics import check_scoring
 from sklearn.model_selection import check_cv, cross_validate
+from sklearn.utils import Bunch
+from sklearn.utils._metadata_requests import _routing_enabled, process_routing
+from sklearn.utils._param_validation import HasMethods, Interval, RealNotInt
+from sklearn.utils._tags import get_tags
+from sklearn.utils.validation import check_is_fitted, validate_data
 
-from sklearn.utils.validation import check_is_fitted
-
-from felimination.importance import (
-    PermutationImportance,
-    _train_score_get_importance,
-)
-from felimination.utils.parallel import Parallel, delayed
+from felimination.importance import PermutationImportance, _train_score_get_importance
 
 
-class FeliminationRFECV(RFE):
+class FeliminationRFECV(RFECV):
     """Perform recursive feature elimination with cross-validation
     following scikit-learn standards.
 
@@ -55,7 +54,7 @@ class FeliminationRFECV(RFE):
 
     The algorithm of feature selection goes as follows:
     ```
-    while n_features > n_features_to_select:
+    while n_features > min_features_to_select:
         - The estimator is trained on the selected features and the score is
           computed using cross validation.
         - feature importance is computed for each validation fold on the validation
@@ -75,7 +74,7 @@ class FeliminationRFECV(RFE):
         (rounded down) of **remaining** features to remove at each iteration.
         Note that the last iteration may remove fewer than ``step`` features in
         order to reach ``min_features_to_select``.
-    n_features_to_select : int or float, default=None
+    min_features_to_select : int or float, default=None
         The number of features to select. If `None`, half of the features are
         selected. If integer, the parameter is the absolute number of features
         to select. If float between 0 and 1, it is the fraction of the features to
@@ -178,7 +177,7 @@ class FeliminationRFECV(RFE):
         estimator,
         step=1,
         cv=5,
-        n_features_to_select=5,
+        min_features_to_select=5,
         importance_getter=PermutationImportance()
     )
     >>> selector = selector.fit(X, y)
@@ -189,12 +188,27 @@ class FeliminationRFECV(RFE):
     array([1, 1, 1, 1, 1, 6, 3, 4, 2, 5])
     """
 
+    _parameter_constraints: dict = {
+        "estimator": [HasMethods(["fit"])],
+        "min_features_to_select": [
+            None,
+            Interval(RealNotInt, 0, 1, closed="right"),
+            Interval(Integral, 0, None, closed="neither"),
+        ],
+        "step": [
+            Interval(Integral, 0, None, closed="neither"),
+            Interval(RealNotInt, 0, 1, closed="neither"),
+        ],
+        "verbose": ["verbose"],
+        "importance_getter": [str, callable],
+    }
+
     def __init__(
         self,
-        estimator: BaseEstimator | LogisticRegression,
+        estimator,
         *,
         step=1,
-        n_features_to_select=1,
+        min_features_to_select=1,
         cv=None,
         scoring=None,
         random_state=None,
@@ -203,14 +217,14 @@ class FeliminationRFECV(RFE):
         importance_getter="auto",
         callbacks=None,
     ) -> None:
-        self.cv = cv
-        self.scoring = scoring
-        self.n_jobs = n_jobs
         self.random_state = random_state
         self.callbacks = callbacks
         super().__init__(
             estimator,
-            n_features_to_select=n_features_to_select,
+            min_features_to_select=min_features_to_select,
+            cv=cv,
+            scoring=scoring,
+            n_jobs=n_jobs,
             step=step,
             verbose=verbose,
             importance_getter=importance_getter,
@@ -244,14 +258,22 @@ class FeliminationRFECV(RFE):
         self : object
             Fitted estimator.
         """
+        if _routing_enabled():
+            routed_params = process_routing(self, "fit", **fit_params)
+        else:
+            routed_params = Bunch(estimator=Bunch(fit=fit_params))
+
+        return self._fit(X, y, groups, **routed_params.estimator.fit)
+
+    def _fit(self, X, y, groups, step_score=None, **fit_params):
         self._validate_params()
-        tags = self._get_tags()
-        self._validate_data(
+        validate_data(
+            self,
             X,
             y,
             accept_sparse="csc",
             ensure_min_features=2,
-            force_all_finite=not tags.get("allow_nan", True),
+            ensure_all_finite=not get_tags(self.estimator).input_tags.allow_nan,
             multi_output=True,
             dtype=None,
         )
@@ -261,12 +283,12 @@ class FeliminationRFECV(RFE):
         scorer = check_scoring(self.estimator, scoring=self.scoring)
         n_features = X.shape[1]
 
-        if self.n_features_to_select is None:
-            n_features_to_select = n_features // 2
-        elif isinstance(self.n_features_to_select, Integral):  # int
-            n_features_to_select = self.n_features_to_select
+        if self.min_features_to_select is None:
+            min_features_to_select = n_features // 2
+        elif isinstance(self.min_features_to_select, Integral):  # int
+            min_features_to_select = self.min_features_to_select
         else:  # float
-            n_features_to_select = int(n_features * self.n_features_to_select)
+            min_features_to_select = int(n_features * self.min_features_to_select)
 
         support_ = np.ones(n_features, dtype=bool)
         ranking_ = np.ones(n_features, dtype=int)
@@ -275,7 +297,7 @@ class FeliminationRFECV(RFE):
         self.cv_results_ = defaultdict(list)
 
         # Elimination
-        while current_number_of_features > n_features_to_select:
+        while current_number_of_features > min_features_to_select:
             # Select remaining features
             X_remaining_features, features = self._select_X_with_remaining_features(
                 X, support=support_, n_features=n_features
@@ -326,7 +348,7 @@ class FeliminationRFECV(RFE):
                 step = int(self.step)
 
             # Eliminate the worst features
-            threshold = min(step, current_number_of_features - n_features_to_select)
+            threshold = min(step, current_number_of_features - min_features_to_select)
 
             support_[features[ranks][:threshold]] = False
             ranking_[np.logical_not(support_)] += 1
@@ -364,7 +386,7 @@ class FeliminationRFECV(RFE):
             scoring=scorer,
             cv=cv,
             n_jobs=self.n_jobs,
-            fit_params=fit_params,
+            params=fit_params,
             return_train_score=True,
         )
         self.cv_results_["n_features"].append(current_number_of_features)
@@ -397,7 +419,7 @@ class FeliminationRFECV(RFE):
         self.cv_results_ = dict(self.cv_results_)
         return self
 
-    def set_n_features_to_select(self, n_features_to_select):
+    def set_min_features_to_select(self, min_features_to_select):
         """Changes the number of features to select after fitting.
 
         The underlying estimator **will not be retrained**. So this method will not
@@ -406,7 +428,7 @@ class FeliminationRFECV(RFE):
 
         Parameters
         ----------
-        n_features_to_select : int
+        min_features_to_select : int
             The number of features to select. Must be a value among
             `cv_results_["n_features"]`
 
@@ -422,14 +444,14 @@ class FeliminationRFECV(RFE):
             feature selection procedure.
         """
         check_is_fitted(self)
-        if n_features_to_select not in self.cv_results_["n_features"]:
+        if min_features_to_select not in self.cv_results_["n_features"]:
             raise ValueError(
-                f"This selector has not been fitted up with {n_features_to_select}, "
+                f"This selector has not been fitted up with {min_features_to_select}, "
                 f"please select a value in {set(self.cv_results_['n_features'])} or "
-                "refit the selector changing the step parameter of the n_features_to_select"
+                "refit the selector changing the step parameter of the min_features_to_select"
             )
         support_ = np.zeros_like(self.support_, dtype=bool)
-        support_[np.argsort(self.ranking_)[:n_features_to_select]] = True
+        support_[np.argsort(self.ranking_)[:min_features_to_select]] = True
         self.support_ = support_
         return self
 
@@ -501,7 +523,7 @@ class PermutationImportanceRFECV(FeliminationRFECV):
 
     The algorithm of feature selection goes as follows:
     ```
-    while n_features > n_features_to_select:
+    while n_features > min_features_to_select:
         - The estimator is trained on the selected features and the score is
           computed using cross validation.
         - feature importance is computed for each validation fold on the validation
@@ -521,7 +543,7 @@ class PermutationImportanceRFECV(FeliminationRFECV):
         (rounded down) of **remaining** features to remove at each iteration.
         Note that the last iteration may remove fewer than ``step`` features in
         order to reach ``min_features_to_select``.
-    n_features_to_select : int or float, default=None
+    min_features_to_select : int or float, default=None
         The number of features to select. If `None`, half of the features are
         selected. If integer, the parameter is the absolute number of features
         to select. If float between 0 and 1, it is the fraction of the features to
@@ -628,7 +650,7 @@ class PermutationImportanceRFECV(FeliminationRFECV):
             estimator,
             step=1,
             cv=5,
-            n_features_to_select=5,
+            min_features_to_select=5,
         )
     >>> selector = selector.fit(X, y)
     >>> selector.support_
@@ -643,7 +665,7 @@ class PermutationImportanceRFECV(FeliminationRFECV):
         estimator: BaseEstimator | LogisticRegression,
         *,
         step=1,
-        n_features_to_select=1,
+        min_features_to_select=1,
         cv=None,
         scoring=None,
         verbose=0,
@@ -660,7 +682,7 @@ class PermutationImportanceRFECV(FeliminationRFECV):
         super().__init__(
             estimator,
             step=step,
-            n_features_to_select=n_features_to_select,
+            min_features_to_select=min_features_to_select,
             cv=cv,
             random_state=random_state,
             scoring=scoring,
