@@ -21,7 +21,7 @@ jobs:
     - name: Install the project and devs
       run: uv sync --group dev
 
-    - name: Publish Documentation to github pages
+    - name: Run pre-commit
       run: |
         uv run pre-commit run --all-files
 
@@ -46,6 +46,6 @@ jobs:
     - name: Install the project and devs
       run: uv sync --group dev
 
-    - name: Publish Documentation to github pages
+    - name: Run pytest tests
       run: |
         uv run pytest tests
