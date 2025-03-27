@@ -8,8 +8,9 @@ This library contains some useful scikit-learn compatible classes for feature se
 
 ## Features
 
-- [Recursive Feature Elimination with Cross Validation using Permutation Importance](reference/RFE.md#felimination.rfe.PermutationImportanceRFECV)
-- [Hybrid Genetic Algorithms x Feature Importance selection](/reference/genetic_algorithms/#felimination.ga.HybridImportanceGACVFeatureSelector)
+- [Recursive Feature Elimination with Cross Validation using Permutation Importance](https://claudiosalvatorearcidiacono.github.io/felimination/reference/RFE/#felimination.rfe.PermutationImportanceRFECV)
+- [Hybrid Genetic Algorithms x Feature Importance selection](https://claudiosalvatorearcidiacono.github.io/felimination/reference/genetic_algorithms/#felimination.ga.HybridImportanceGACVFeatureSelector)
+
 
 ## Requirements
 
