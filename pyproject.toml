@@ -24,10 +24,10 @@ dependencies = [
 dev = [
     "black",
     "flake8-pyproject",
-    "flake8",
     "pre-commit",
     "pytest",
     "isort>=6.0.1",
+    "ruff>=0.11.2",
 ]
 doc = [
     "mkdocs",
@@ -65,9 +65,6 @@ exclude = '''
   | dist
 )/
 '''
-
-[tool.flake8]
-max-line-length = 88
 
 [tool.isort]
 profile = "black"

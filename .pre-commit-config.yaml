@@ -14,15 +14,15 @@ repos:
     - id: black
 -   repo: local
     hooks:
-      - id: isort
-        name: sort imports
-        entry: isort
-        require_serial: true
-        language: system
--   repo: local
-    hooks:
-    - id: flake8
-      name: Run flake8
-      entry: flake8
-      files: "^.py"
+    - id: isort
+      name: sort imports
+      entry: isort
+      require_serial: true
       language: system
+    - id: ruff
+      name: ruff
+      files: "^.py"
+      entry: ruff
+      language: system
+      types: [python]
+      args: [check, --fix]
