@@ -99,7 +99,7 @@ selector.ranking_
 #        19, 22, 24, 23, 24, 23, 20, 24, 23, 19,  7, 18, 23])
 selector.plot()
 ```
-![RFECV fit plot](./docs/assets/rfecv_fit_plot.png)
+![RFECV fit plot](./assets/rfecv_fit_plot.png)
 
 ## Genetic Algorithms
 In this section it will be illustrated how to use the `HybridImportanceGACVFeatureSelector` class.
