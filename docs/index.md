@@ -9,7 +9,7 @@ This library contains some useful scikit-learn compatible classes for feature se
 
 ## Requirements
 
-- Python 3.7+
+- Python 3.10+
 - NumPy
 - Scikit-learn
 - Pandas
