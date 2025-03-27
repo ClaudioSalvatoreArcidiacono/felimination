@@ -206,7 +206,7 @@ class HybridImportanceGACVFeatureSelector(
         If `callable`, overrides the default feature importance getter.
         The callable is passed with the fitted estimator and the validation set
         (X_val, y_val, estimator) and it should return importance for each feature.
-    min_n_features_to_select : int or float, default=1
+    min_features_to_select : int or float, default=1
         The minimum number of features to select. If float, it represents the
         fraction of features to select.
     init_avg_features_num : float, default=15
@@ -307,7 +307,7 @@ class HybridImportanceGACVFeatureSelector(
 
     _parameter_constraints: dict = {
         "estimator": [HasMethods(["fit"])],
-        "min_n_features_to_select": [
+        "min_features_to_select": [
             None,
             Interval(RealNotInt, 0, 1, closed="right"),
             Interval(Integral, 0, None, closed="neither"),
@@ -337,7 +337,7 @@ class HybridImportanceGACVFeatureSelector(
         random_state=None,
         n_jobs=None,
         importance_getter="auto",
-        min_n_features_to_select=1,
+        min_features_to_select=1,
         init_avg_features_num=15,
         init_std_features_num=5,
         pool_size=20,
@@ -358,7 +358,7 @@ class HybridImportanceGACVFeatureSelector(
         self.random_state = random_state
         self.n_jobs = n_jobs
         self.importance_getter = importance_getter
-        self.min_n_features_to_select = min_n_features_to_select
+        self.min_features_to_select = min_features_to_select
         self.init_avg_features_num = init_avg_features_num
         self.init_std_features_num = init_std_features_num
         self.pool_size = pool_size
@@ -493,7 +493,7 @@ class HybridImportanceGACVFeatureSelector(
             number_of_features = max(
                 len(element["features"])
                 + np.random.randint(*self.range_change_n_features_mutation),
-                self.min_n_features_to_select,
+                self.min_features_to_select,
             )
 
             # Replace the least important features with random features
@@ -562,12 +562,12 @@ class HybridImportanceGACVFeatureSelector(
         cv = check_cv(self.cv, y, classifier=is_classifier(self.estimator))
         scorer = check_scoring(self.estimator, scoring=self.scoring)
         n_features = X.shape[1]
-        if self.min_n_features_to_select is None:
-            min_n_features_to_select = n_features // 2
-        elif isinstance(self.min_n_features_to_select, Integral):  # int
-            min_n_features_to_select = self.min_n_features_to_select
+        if self.min_features_to_select is None:
+            min_features_to_select = n_features // 2
+        elif isinstance(self.min_features_to_select, Integral):  # int
+            min_features_to_select = self.min_features_to_select
         else:  # float
-            min_n_features_to_select = int(n_features * self.min_n_features_to_select)
+            min_features_to_select = int(n_features * self.min_features_to_select)
 
         if isinstance(X, pd.DataFrame):
             all_features = X.columns.to_list()
@@ -590,7 +590,7 @@ class HybridImportanceGACVFeatureSelector(
                                         self.init_std_features_num,
                                     )
                                 ),
-                                min_n_features_to_select,
+                                min_features_to_select,
                             ),
                             n_features,
                         ),
