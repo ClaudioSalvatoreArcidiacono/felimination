@@ -41,7 +41,7 @@ from joblib import Parallel, delayed, effective_n_jobs
 from sklearn.base import ClassifierMixin, clone
 from sklearn.metrics import check_scoring
 from sklearn.model_selection import check_cv
-from sklearn.utils._tags import _safe_tags, get_tags
+from sklearn.utils._tags import get_tags
 from sklearn.utils.validation import validate_data
 
 from felimination.importance import PermutationImportance
