@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 from joblib import Parallel, delayed, effective_n_jobs
-from sklearn.base import BaseEstimator, clone, is_classifier
+from sklearn.base import BaseEstimator, _fit_context, clone, is_classifier
 from sklearn.feature_selection import RFECV
 from sklearn.linear_model._logistic import LogisticRegression
 from sklearn.metrics import check_scoring
@@ -278,31 +278,6 @@ class FeliminationRFECV(RFECV):
             X_remaining_features = X[:, features]
         return X_remaining_features, features
 
-    def fit(self, X, y, groups=None, **fit_params):
-        """Fit the RFE model and then the underlying estimator on the selected features.
-
-        Parameters
-        ----------
-        X : {array-like, sparse matrix} of shape (n_samples, n_features)
-            The training input samples.
-        y : array-like of shape (n_samples,)
-            The target values.
-        **fit_params : dict
-            Additional parameters passed to the `fit` method of the underlying
-            estimator.
-
-        Returns
-        -------
-        self : object
-            Fitted estimator.
-        """
-        if _routing_enabled():
-            routed_params = process_routing(self, "fit", **fit_params)
-        else:
-            routed_params = Bunch(estimator=Bunch(fit=fit_params))
-
-        return self._fit(X, y, groups, **routed_params.estimator.fit)
-
     def select_best_iteration(self, cv_results):
         """Selects the best number of features based on the cv_results.
 
@@ -326,8 +301,20 @@ class FeliminationRFECV(RFECV):
                 np.argmax(cv_results[self.best_iteration_selection_criteria])
             ]
 
-    def _fit(self, X, y, groups, step_score=None, **fit_params):
-        self._validate_params()
+    @_fit_context(
+        # estimator not validated yet
+        prefer_skip_nested_validation=False
+    )
+    def fit(self, X, y, groups=None, **params):
+        if _routing_enabled():
+            routed_params = process_routing(self, "fit", **params)
+        else:
+            routed_params = Bunch(
+                estimator=Bunch(fit={}),
+                splitter=Bunch(split={"groups": params.pop("groups", None)}),
+                scorer=Bunch(score={}),
+            )
+
         validate_data(
             self,
             X,
@@ -385,8 +372,11 @@ class FeliminationRFECV(RFECV):
                     test,
                     scorer,
                     self.importance_getter,
+                    routed_params,
                 )
-                for train, test in cv.split(X_remaining_features, y, groups)
+                for train, test in cv.split(
+                    X_remaining_features, y, **routed_params.splitter.split
+                )
             )
             train_scores_per_fold = [
                 score_importance[0] for score_importance in scores_importances
@@ -447,7 +437,7 @@ class FeliminationRFECV(RFECV):
             scoring=scorer,
             cv=cv,
             n_jobs=self.n_jobs,
-            params=fit_params,
+            params=params,
             return_train_score=True,
         )
         self.cv_results_["n_features"].append(current_number_of_features)
@@ -480,7 +470,7 @@ class FeliminationRFECV(RFECV):
         )
 
         self.estimator_ = clone(self.estimator)
-        self.estimator_.fit(X_remaining_features, y, **fit_params)
+        self.estimator_.fit(X_remaining_features, y, **routed_params.estimator.fit)
 
         return self
 

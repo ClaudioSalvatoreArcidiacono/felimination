@@ -11,11 +11,19 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 from joblib import Parallel, delayed, effective_n_jobs
-from sklearn.base import BaseEstimator, MetaEstimatorMixin, clone, is_classifier
+from sklearn.base import (
+    BaseEstimator,
+    MetaEstimatorMixin,
+    _fit_context,
+    clone,
+    is_classifier,
+)
 from sklearn.feature_selection import SelectorMixin
 from sklearn.linear_model._logistic import LogisticRegression
 from sklearn.metrics import check_scoring
 from sklearn.model_selection import check_cv
+from sklearn.utils import Bunch
+from sklearn.utils._metadata_requests import _routing_enabled, process_routing
 from sklearn.utils._param_validation import HasMethods, Interval, RealNotInt
 from sklearn.utils._tags import get_tags
 from sklearn.utils.metaestimators import available_if
@@ -383,7 +391,7 @@ class HybridImportanceGACVFeatureSelector(
         return self.best_solutions_[-1]
 
     def _evaluate_calculate_importances(
-        self, pool, X, y, groups, cv, scorer, **fit_params
+        self, pool, X, y, groups, cv, scorer, routed_params
     ):
         if effective_n_jobs(self.n_jobs) == 1:
             parallel, func = list, _train_score_get_importance
@@ -414,12 +422,12 @@ class HybridImportanceGACVFeatureSelector(
                 test,
                 scorer,
                 self.importance_getter,
-                **fit_params,
+                routed_params=routed_params,
             )
             for element in pool
-            for train, test in cv.split(X, y, groups)
+            for train, test in cv.split(X, y, **routed_params.splitter.split)
         )
-        n_splits = len(list(cv.split(X, y, groups)))
+        n_splits = len(list(cv.split(X, y, **routed_params.splitter.split)))
         for i, element in enumerate(pool):
             scores_importances = scores_importances_1d_array[
                 i * n_splits : (i + 1) * n_splits
@@ -528,7 +536,11 @@ class HybridImportanceGACVFeatureSelector(
         check_is_fitted(self)
         return self.support_
 
-    def fit(self, X, y, groups=None, **fit_params):
+    @_fit_context(
+        # estimator not validated yet
+        prefer_skip_nested_validation=False
+    )
+    def fit(self, X, y, groups=None, **params):
         """Fit the selector and then the underlying estimator on the selected features.
 
         Parameters
@@ -537,7 +549,7 @@ class HybridImportanceGACVFeatureSelector(
             The training input samples.
         y : array-like of shape (n_samples,)
             The target values.
-        **fit_params : dict
+        **params : dict
             Additional parameters passed to the `fit` method of the underlying
             estimator.
 
@@ -546,7 +558,15 @@ class HybridImportanceGACVFeatureSelector(
         self : object
             Fitted estimator.
         """
-        self._validate_params()
+        if _routing_enabled():
+            routed_params = process_routing(self, "fit", **params)
+        else:
+            routed_params = Bunch(
+                estimator=Bunch(fit={}),
+                splitter=Bunch(split={"groups": params.pop("groups", None)}),
+                scorer=Bunch(score={}),
+            )
+
         validate_data(
             self,
             X,
@@ -603,18 +623,18 @@ class HybridImportanceGACVFeatureSelector(
 
         # Evaluate the initial pool of solutions
         pool = self._evaluate_calculate_importances(
-            pool, X, y, groups, cv, scorer, **fit_params
+            pool, X, y, groups, cv, scorer, routed_params
         )
         self.best_solutions_ = []
         for _ in range(1, self.max_generations):
             children = self._cross_over(pool)
             children = self._evaluate_calculate_importances(
-                children, X, y, groups, cv, scorer, **fit_params
+                children, X, y, groups, cv, scorer, routed_params
             )
             pool.extend(children)
             mutations = self._mutate(pool, all_features)
             mutations = self._evaluate_calculate_importances(
-                mutations, X, y, groups, cv, scorer, **fit_params
+                mutations, X, y, groups, cv, scorer, routed_params
             )
             pool.extend(mutations)
             pool_sorted = [
@@ -645,7 +665,7 @@ class HybridImportanceGACVFeatureSelector(
         X_remaining_features = _select_X_with_features(
             X, self.best_solution_["features"]
         )
-        self.estimator_.fit(X_remaining_features, y, **fit_params)
+        self.estimator_.fit(X_remaining_features, y, **routed_params.estimator.fit)
         self.support_ = np.array(
             [
                 True if feature in self.best_solution_["features"] else False
@@ -800,6 +820,13 @@ class HybridImportanceGACVFeatureSelector(
         """
         check_is_fitted(self)
         return self.estimator_.predict_log_proba(self.transform(X))
+
+    def __sklearn_tags__(self):
+        tags = super().__sklearn_tags__()
+        sub_estimator_tags = get_tags(self.estimator)
+        tags.target_tags.required = False
+        tags.input_tags.allow_nan = sub_estimator_tags.input_tags.allow_nan
+        return tags
 
     def __sklearn_tags__(self):
         tags = super().__sklearn_tags__()

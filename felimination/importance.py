@@ -8,10 +8,11 @@ from sklearn.inspection import permutation_importance
 from sklearn.model_selection._validation import _score
 from sklearn.utils import safe_sqr
 from sklearn.utils.metaestimators import _safe_split
+from sklearn.utils.validation import _check_method_params
 
 
 def _train_score_get_importance(
-    estimator, X, y, train, test, scorer, importance_getter, **fit_params
+    estimator, X, y, train, test, scorer, importance_getter, routed_params
 ):
     """
     Train and test an estimator and get the feature importances.
@@ -33,6 +34,8 @@ def _train_score_get_importance(
     importance_getter : "auto", str or callable
         An attribute or a callable to get the feature importance. If `"auto "`,
         `estimator` is expected to expose `coef_` or `feature_importances_`.
+    routed_params : Bunch
+        The routed parameters for the estimator.
 
     Returns
     -------
@@ -47,9 +50,22 @@ def _train_score_get_importance(
     estimator = clone(estimator)
     X_train, y_train = _safe_split(estimator, X, y, train)
     X_test, y_test = _safe_split(estimator, X, y, test, train)
+    fit_params = _check_method_params(
+        X, params=routed_params.estimator.fit, indices=train
+    )
+    score_params_test = _check_method_params(
+        X=X, params=routed_params.scorer.score, indices=test
+    )
+    score_params_train = _check_method_params(
+        X=X, params=routed_params.scorer.score, indices=train
+    )
     estimator = estimator.fit(X_train, y_train, **fit_params)
-    train_score = _score(estimator, X_train, y_train, scorer, score_params=None)
-    test_score = _score(estimator, X_test, y_test, scorer, score_params=None)
+    train_score = _score(
+        estimator, X_train, y_train, scorer, score_params=score_params_train
+    )
+    test_score = _score(
+        estimator, X_test, y_test, scorer, score_params=score_params_test
+    )
     importances = _get_feature_importances(
         estimator, importance_getter, X=X_test, y=y_test
     )
