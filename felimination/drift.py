@@ -38,9 +38,11 @@ from numbers import Integral
 import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed, effective_n_jobs
-from sklearn.base import ClassifierMixin, clone
+from sklearn.base import ClassifierMixin, _fit_context, clone
 from sklearn.metrics import check_scoring
 from sklearn.model_selection import check_cv
+from sklearn.utils import Bunch
+from sklearn.utils._metadata_requests import _routing_enabled, process_routing
 from sklearn.utils._tags import get_tags
 from sklearn.utils.validation import validate_data
 
@@ -242,7 +244,11 @@ class SampleSimilarityDriftRFE(FeliminationRFECV):
             X2 = X.loc[~mask]
         return X1, X2
 
-    def fit(self, X, y=None, groups=None, **fit_params):
+    @_fit_context(
+        # estimator not validated yet
+        prefer_skip_nested_validation=False
+    )
+    def fit(self, X, y=None, groups=None, **params):
         """Fit the RFE model and then the underlying clf on the selected features.
 
         Parameters
@@ -264,7 +270,15 @@ class SampleSimilarityDriftRFE(FeliminationRFECV):
         self : object
             Fitted selector.
         """
-        self._validate_params()
+        if _routing_enabled():
+            routed_params = process_routing(self, "fit", **params)
+        else:
+            routed_params = Bunch(
+                estimator=Bunch(fit={}),
+                splitter=Bunch(split={"groups": params.pop("groups", None)}),
+                scorer=Bunch(score={}),
+            )
+
         validate_data(
             self,
             X,
@@ -332,8 +346,11 @@ class SampleSimilarityDriftRFE(FeliminationRFECV):
                 test,
                 scorer,
                 self.importance_getter,
+                routed_params,
             )
-            for train, test in cv.split(X_remaining_features, y, groups)
+            for train, test in cv.split(
+                X_remaining_features, y, **routed_params.splitter.split
+            )
         )
 
         test_scores_per_fold = [
@@ -403,8 +420,11 @@ class SampleSimilarityDriftRFE(FeliminationRFECV):
                     test,
                     scorer,
                     self.importance_getter,
+                    routed_params,
                 )
-                for train, test in cv.split(X_remaining_features, y, groups)
+                for train, test in cv.split(
+                    X_remaining_features, y, **routed_params.splitter.split
+                )
             )
             train_scores_per_fold = [
                 score_importance[0] for score_importance in scores_importances
@@ -432,7 +452,7 @@ class SampleSimilarityDriftRFE(FeliminationRFECV):
         X_remaining_features, features = self._select_X_with_remaining_features(
             X, support=support_
         )
-        self.clf_.fit(X_remaining_features, y, **fit_params)
+        self.clf_.fit(X_remaining_features, y, **routed_params.estimator.fit)
 
         self.n_features_ = support_.sum()
         self.support_ = support_

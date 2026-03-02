@@ -1,7 +1,7 @@
 [project]
 name = "felimination"
 description = "This library contains some useful scikit-learn compatible classes for feature selection."
-version = "0.5.0"
+version = "0.6.0"
 keywords = ["feature selection", "scikit-learn", "machine learning"]
 authors = [
     { name = "Claudio Salvatore Arcidiacono", email = "author@email.com" }
@@ -28,6 +28,7 @@ dev = [
     "pytest",
     "isort>=6.0.1",
     "ruff>=0.11.2",
+    "pytest-cov>=7.0.0",
 ]
 doc = [
     "mkdocs",

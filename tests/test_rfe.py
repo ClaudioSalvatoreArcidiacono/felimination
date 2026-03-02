@@ -1,10 +1,14 @@
+from unittest.mock import Mock
+
 import numpy as np
 import pandas as pd
 import pytest
+import sklearn
 from sklearn.compose import ColumnTransformer
 from sklearn.datasets import make_classification, make_friedman1
 from sklearn.exceptions import NotFittedError
 from sklearn.linear_model import LinearRegression, LogisticRegression
+from sklearn.metrics import make_scorer
 from sklearn.model_selection import ShuffleSplit
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
@@ -38,6 +42,13 @@ def sample_size():
 @pytest.fixture(scope="session")
 def cv(random_state):
     return ShuffleSplit(random_state=random_state)
+
+
+@pytest.fixture(scope="function")
+def enable_metadata_routing():
+    sklearn.set_config(enable_metadata_routing=True)
+    yield
+    sklearn.set_config(enable_metadata_routing=False)
 
 
 @pytest.fixture(scope="session")
@@ -128,6 +139,23 @@ def test_perm_imp_rfecv_classification_base_case_np_arrays(
         selector.support_
         == [True] * n_useful_features_classification + [False] * n_random_features
     ).all()
+
+
+@pytest.mark.usefixtures("enable_metadata_routing")
+def test_perm_imp_rfecv_classification_base_case_np_arrays_metadata_routing_enabled(
+    x_y_classification_with_rand_columns_arrays,
+    n_useful_features_classification,
+    n_random_features,
+    cv,
+    random_state,
+):
+    test_perm_imp_rfecv_classification_base_case_np_arrays(
+        x_y_classification_with_rand_columns_arrays,
+        n_useful_features_classification,
+        n_random_features,
+        cv,
+        random_state,
+    )
 
 
 def test_perm_imp_rfecv_classification_base_case_pandas(
@@ -323,3 +351,32 @@ def test_rfecv_set_n_features_to_select_exception_cases(
 
     with pytest.raises(ValueError):
         selector.set_n_features_to_select(X_with_rand.shape[0] + 1)
+
+
+@pytest.mark.usefixtures("enable_metadata_routing")
+def test_perm_imp_rfecv_metadata_routing_sample_weights(
+    x_y_classification_with_rand_columns_arrays,
+    n_useful_features_classification,
+    cv,
+    random_state,
+):
+    X_with_rand, y = x_y_classification_with_rand_columns_arrays
+    sample_weight = np.random.rand(X_with_rand.shape[0])
+
+    # Mock scorer to check if sample_weight is passed
+    scorer = Mock(return_value=0.5)
+
+    selector = PermutationImportanceRFECV(
+        LogisticRegression(random_state=random_state).set_fit_request(
+            sample_weight=True
+        ),
+        cv=cv,
+        min_features_to_select=n_useful_features_classification,
+        scoring=make_scorer(scorer).set_score_request(sample_weight=True),
+    )
+
+    selector.fit(X_with_rand, y, sample_weight=sample_weight)
+
+    # Check that the scorer was called with sample_weight
+    assert scorer.call_args is not None
+    assert "sample_weight" in scorer.call_args.kwargs
