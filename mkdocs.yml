@@ -1,5 +1,7 @@
 site_name: felimination
 site_url: https://claudiosalvatorearcidiacono.github.io/felimination/
+repo_url: https://github.com/claudiosalvatorearcidiacono/felimination
+repo_name: felimination
 
 theme:
   name: material
