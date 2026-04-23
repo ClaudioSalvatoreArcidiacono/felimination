@@ -126,13 +126,13 @@ class FeliminationRFECV(RFECV):
         List of callables to be called at the end of each step of the feature
         selection. Each callable should accept two parameters: the selector
         and the importances computed at that step. See an example of callbacks in the
-        [`callbacks`](/felimination/reference/callbacks) module.
+        [`callbacks`](/felimination/reference/utils/callbacks) module.
     best_iteration_selection_criteria : str or callable, default='mean_test_score'
         The criteria to select the best number of features. If a string, it should be
         one of the keys in the `cv_results_` attribute. If a callable, it should
         accept the `cv_results_` dictionary and return the best number of features. Best number of
         features must be one of the values in the `cv_results_["n_features"]` array.
-        See [`select_best_by_mean_test_score_and_overfit`](/felimination/reference/RFE/#felimination.rfe.select_best_by_mean_test_score_and_overfit)
+        See [`select_best_by_mean_test_score_and_overfit`](/felimination/reference/utils/best_iteration_selection/#felimination.best_iteration_selection.select_best_by_mean_test_score_and_overfit)
         for an example of a custom criteria.
 
     Attributes
@@ -655,13 +655,13 @@ class PermutationImportanceRFECV(FeliminationRFECV):
         List of callables to be called at the end of each step of the feature
         selection. Each callable should accept two parameters: the selector
         and the importances computed at that step. See an example of callbacks in the
-        [`callbacks`](/felimination/reference/callbacks) module.
+        [`callbacks`](/felimination/reference/utils/callbacks) module.
     best_iteration_selection_criteria : str or callable, default='mean_test_score'
         The criteria to select the best number of features. If a string, it should be
         one of the keys in the `cv_results_` attribute. If a callable, it should
         accept the `cv_results_` dictionary and return the best number of features. Best number of
         features must be one of the values in the `cv_results_["n_features"]` array.
-        See [`select_best_by_mean_test_score_and_overfit`](/felimination/reference/RFE/#felimination.rfe.select_best_by_mean_test_score_and_overfit)
+        See [`select_best_by_mean_test_score_and_overfit`](/felimination/reference/utils/best_iteration_selection/#felimination.best_iteration_selection.select_best_by_mean_test_score_and_overfit)
         for an example of a custom criteria.
 
 

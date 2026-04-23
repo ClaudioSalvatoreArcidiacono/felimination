@@ -5,8 +5,8 @@ This module contains:
 
 - `MRMRRanker`: stateful importance-getter callable implementing the MRMR
     score (mutual information relevance / absolute Pearson correlation
-    redundance), suitable for use with `ForwardSelectorCV`.
-- `MRMRCV`: preset of `ForwardSelectorCV` wired with `MRMRRanker`.
+    redundance), suitable for use with [`ForwardSelectorCV`](/felimination/reference/selectors/forward_selection/#felimination.forward.ForwardSelectorCV).
+- `MRMRCV`: preset of [`ForwardSelectorCV`](/felimination/reference/selectors/forward_selection/#felimination.forward.ForwardSelectorCV) wired with [`MRMRRanker`](/felimination/reference/selectors/MRMR/#felimination.mrmr.MRMRRanker).
 """
 
 import numpy as np
@@ -27,7 +27,7 @@ def abs_pearson_correlation(X, y):
     """Absolute Pearson correlation between each column of ``X`` and ``y``.
 
     Convenience helper for use as ``relevance_func`` or
-    ``redundance_func`` in `MRMRRanker`. Only suitable for numeric data;
+    ``redundance_func`` in [`MRMRRanker`](/felimination/reference/selectors/MRMR/#felimination.mrmr.MRMRRanker). Only suitable for numeric data;
     use mutual-information based scoring (the default) when categorical
     features are present.
 
@@ -56,7 +56,7 @@ def abs_pearson_correlation(X, y):
 
 class MRMRRanker:
     """Stateful importance getter implementing the Minimum Redundancy
-    Maximum Relevance score, designed for `ForwardSelectorCV`.
+    Maximum Relevance score, designed for [`ForwardSelectorCV`](/felimination/reference/selectors/forward_selection/#felimination.forward.ForwardSelectorCV).
 
     By default both relevance (feature-vs-target) and redundance
     (feature-vs-already-selected-feature) are computed with mutual
@@ -66,7 +66,7 @@ class MRMRRanker:
 
     The ranker keeps internal caches across calls within a single forward
     selection run. Caches are reset whenever it is called with an empty
-    ``selected_idx`` (which `ForwardSelectorCV` always does at the start
+    ``selected_idx`` (which [`ForwardSelectorCV`](/felimination/reference/selectors/forward_selection/#felimination.forward.ForwardSelectorCV) always does at the start
     of every ``fit``).
 
     Parameters
@@ -136,12 +136,12 @@ class MRMRRanker:
           ``(n_selected, n_features)``. Rows correspond to
           already-selected features; columns to candidate features.
 
-        .. note::
-            The default ``'max'`` deviates from the original MRMR paper,
-            which uses the mean. ``'max'`` is chosen as the default
-            because it more aggressively avoids adding features that
-            duplicate information already captured, which tends to work
-            better in practice for forward selection with CV scoring.
+        > Note:
+        >    The default ``'max'`` deviates from the original MRMR paper,
+        >    which uses the mean. ``'max'`` is chosen as the default
+        >    because it more aggressively avoids adding features that
+        >    duplicate information already captured, which tends to work
+        >    better in practice for forward selection with CV scoring.
     min_relevance : float or None, default=0.05
         If set, features whose relevance score is strictly below this
         threshold are assigned ``-inf`` and will never be selected.
@@ -320,58 +320,145 @@ class MRMRRanker:
 
 
 class MRMRCV(ForwardSelectorCV):
-    """Preset of `ForwardSelectorCV` wired for forward MRMR selection.
+    """Forward feature selector using Minimum Redundancy Maximum Relevance (MRMR) scoring.
 
-    Equivalent to ``ForwardSelectorCV(estimator,
-    importance_getter=MRMRRanker(...), ...)``.
+    Performs forward feature selection driven by MRMR scores, using
+    cross-validation to determine the optimal number of features.
+
+    The selector starts by ranking all features by their relevance to the
+    target and picks the highest-scoring one. It then iteratively selects
+    the feature that maximises relevance minus (or divided by) redundance
+    with already-selected features. Cross-validation scores the model at
+    each evaluated step.
+
+    By default both relevance (feature-vs-target) and redundance
+    (feature-vs-already-selected-feature) are computed with mutual
+    information, which handles continuous and categorical features
+    transparently when ``discrete_features`` is supplied. Both functions
+    can be swapped out via ``relevance_func`` / ``redundance_func``.
 
     Parameters
     ----------
     estimator : ``Estimator`` instance
-        A supervised learning estimator used to score candidate feature
-        subsets via cross-validation. Used to detect classification vs.
-        regression for the default ranker (via `is_classifier`) and for
-        the CV scoring loop.
+        A supervised learning estimator with a ``fit`` method, used to
+        score candidate feature subsets via cross-validation. Also used to
+        detect classification vs. regression for the MRMR ranker (via
+        ``is_classifier``).
     step : int or float, default=1
-        See `ForwardSelectorCV`.
+        Number of features added between two consecutive cross-validation
+        evaluations. If greater than or equal to 1, this is the integer
+        number of features added per evaluation. If within (0.0, 1.0), it
+        is the fraction (rounded down, with a floor of 1) of the already-
+        selected features added per evaluation, growing the selection
+        geometrically. Selection within a step still happens one feature
+        at a time.
     min_features_to_select : int, default=None
-        See `ForwardSelectorCV`.
+        Minimum number of features that must be selected before the first
+        cross-validation evaluation. Features are still selected via MRMR
+        scoring before this threshold, but no CV scoring takes place. If
+        ``None``, defaults to 1 (CV evaluation starts from the very first
+        selected feature).
     max_features_to_select : int, default=None
-        See `ForwardSelectorCV`.
+        Maximum number of features to select. The forward process stops
+        once this many features have been selected. If ``None``, defaults
+        to all features in ``X``.
     cv : int, cross-validation generator or an iterable, default=None
-        See `ForwardSelectorCV`.
+        Determines the cross-validation splitting strategy. See
+        `~sklearn.model_selection.check_cv` for accepted inputs.
     scoring : str, callable or None, default=None
-        See `ForwardSelectorCV`.
+        Scorer used to evaluate the estimator on each CV fold.
     verbose : int, default=0
-        See `ForwardSelectorCV`.
+        Controls verbosity of output.
     n_jobs : int or None, default=None
-        Forwarded to `ForwardSelectorCV` and to `MRMRRanker`.
+        Number of cores to run in parallel while fitting across folds.
+        Also forwarded to the default mutual information estimators used
+        for MRMR scoring.
     random_state : int, RandomState instance or None, default=None
-        Forwarded to `MRMRRanker` and used by `plot`.
+        Seed used by the default mutual information estimators and by
+        ``plot``.
     scheme : {'ratio', 'difference'}, default='difference'
-        MRMR combination scheme. See `MRMRRanker`.
+        How to combine relevance and redundance:
+
+        - ``'ratio'``: ``relevance / redundance`` (MIQ-style).
+        - ``'difference'``: ``relevance - redundance`` (MID-style).
     n_neighbors : int, default=3
-        Mutual information estimator parameter. See `MRMRRanker`.
+        Number of neighbors used by the default mutual information
+        estimators. Ignored when both ``relevance_func`` and
+        ``redundance_func`` are overridden.
     discrete_features : 'auto', bool or array-like, default='auto'
-        Indicates which input features are categorical. See
-        `MRMRRanker`.
+        Indicates which input features are categorical. Accepted formats
+        match `sklearn.feature_selection.mutual_info_classif`:
+
+        - ``'auto'``: infer from dtype when ``X`` is a
+          :class:`pandas.DataFrame` — columns with categorical, string,
+          or object dtype are treated as discrete; all others as
+          continuous. Falls back to all-continuous for plain arrays.
+        - ``True``: treat all features as discrete.
+        - boolean mask of shape ``(n_features,)``.
+        - integer array of indices of the discrete features.
+
+        Used by the default relevance and redundance functions, both to
+        tell the mutual information estimator which inputs are
+        categorical and to decide whether to use the classifier or
+        regressor estimator when a categorical feature is the target of
+        a redundance computation. Ignored when both
+        ``relevance_func`` and ``redundance_func`` are overridden.
     relevance_func : callable, default=None
-        Optional override for the relevance computation. See
-        `MRMRRanker`.
+        Optional override for the relevance computation. Signature:
+        ``relevance_func(X, y) -> ndarray`` of shape ``(n_features,)``,
+        scoring each feature against the target. When ``None`` (default),
+        mutual information is used (handles categorical features via
+        ``discrete_features``). Use `abs_pearson_correlation` for a fast
+        Pearson-based alternative on purely numeric data.
     redundance_func : callable, default=None
-        Optional override for the redundance computation. See
-        `MRMRRanker`.
+        Optional override for the redundance computation. Signature:
+        ``redundance_func(X, y_feature) -> ndarray`` of shape
+        ``(n_features,)``, scoring each feature against the
+        already-selected ``y_feature``. When ``None`` (default), mutual
+        information is used (the classifier vs. regressor estimator is
+        chosen based on whether the target column is marked as
+        categorical in ``discrete_features``).
     redundancy_aggregation : {'max', 'mean'} or callable, default='max'
-        How to aggregate redundancy scores across selected features. See
-        `MRMRRanker`.
+        How to aggregate per-selected-feature redundancy scores into a
+        single redundancy value before combining with relevance:
+
+        - ``'max'``: take the element-wise maximum across all
+          already-selected features. A candidate is penalised as soon as
+          it is highly redundant with *any* selected feature, making the
+          criterion more conservative.
+        - ``'mean'``: take the element-wise mean, matching the
+          formulation in the original MRMR paper (Peng et al., 2005).
+        - callable: a function with signature
+          ``f(redundancy_matrix) -> ndarray`` of shape ``(n_features,)``,
+          where ``redundancy_matrix`` has shape
+          ``(n_selected, n_features)``. Rows correspond to
+          already-selected features; columns to candidate features.
+
+        > Note:
+        >    The default ``'max'`` deviates from the original MRMR paper,
+        >    which uses the mean. ``'max'`` is chosen as the default
+        >    because it more aggressively avoids adding features that
+        >    duplicate information already captured, which tends to work
+        >    better in practice for forward selection with CV scoring.
     min_relevance : float or None, default=0.05
-        Minimum relevance threshold. See `MRMRRanker`.
+        If set, features whose relevance score is strictly below this
+        threshold are assigned ``-inf`` and will never be selected.
+        Applied at every step, including the first (no selected features).
     max_redundancy : float or None, default=None
-        Maximum redundancy threshold. See `MRMRRanker`.
+        If set, features whose aggregated redundancy with the
+        already-selected features exceeds this threshold are assigned
+        ``-inf`` and will not be selected in that round. The aggregation
+        is controlled by ``redundancy_aggregation``. Only applied when at
+        least one feature has already been selected.
     callbacks : list of callable, default=None
-        See `ForwardSelectorCV`.
+        List of callables called at the end of each evaluated step. Each
+        callable receives ``(selector, scores)`` where ``scores`` is the
+        last array of MRMR scores.
     best_iteration_selection_criteria : str or callable, default='mean_test_score'
-        See `ForwardSelectorCV`.
+        Either a key into ``cv_results_`` (the iteration that maximises
+        that key is picked) or a callable
+        ``f(cv_results) -> n_features`` that must return one of the values
+        in ``cv_results_["n_features"]``.
 
     Examples
     --------
