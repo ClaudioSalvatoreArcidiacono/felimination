@@ -25,35 +25,10 @@ from sklearn.utils._param_validation import HasMethods, Interval, RealNotInt
 from sklearn.utils._tags import get_tags
 from sklearn.utils.validation import check_is_fitted, validate_data
 
+from felimination.best_iteration_selection import (  # noqa: F401  (re-exported)
+    select_best_by_mean_test_score_and_overfit,
+)
 from felimination.importance import PermutationImportance, _train_score_get_importance
-
-
-def select_best_by_mean_test_score_and_overfit(cv_results):
-    """Selects the best number of features based on the cv_results.
-
-    It selects the number of features that maximizes the mean test score and minimizes the overfit.
-
-    Parameters
-    ----------
-    cv_results : dict
-        Dictionary with the results of the cross-validation. It should have
-        the following keys:
-        - "mean_test_score": Mean of scores over the folds.
-        - "n_features": The number of features used at that step.
-
-    Returns
-    -------
-    int
-        The number of features that maximizes the mean test score.
-    """
-    cv_df = pd.DataFrame(cv_results)
-    cv_df["rank_mean_test_score"] = cv_df["mean_test_score"].rank(ascending=False)
-    cv_df["overfit"] = cv_df["mean_train_score"] - cv_df["mean_test_score"]
-    cv_df["rank_overfit"] = cv_df["overfit"].rank(ascending=True)
-    cv_df["rank_sum"] = cv_df["rank_mean_test_score"] + cv_df["rank_overfit"]
-    return cv_df.sort_values(["rank_sum", "mean_test_score"], ascending=[True, False])[
-        "n_features"
-    ].iloc[0]
 
 
 class FeliminationRFECV(RFECV):

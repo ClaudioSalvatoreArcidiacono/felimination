@@ -9,6 +9,7 @@ This library contains some useful scikit-learn compatible classes for feature se
 ## Features
 
 - [Recursive Feature Elimination with Cross Validation using Permutation Importance](https://claudiosalvatorearcidiacono.github.io/felimination/reference/RFE/#felimination.rfe.PermutationImportanceRFECV)
+- [Forward Feature Selection with Minimum Redundancy Maximum Relevance (MRMR)](https://claudiosalvatorearcidiacono.github.io/felimination/reference/mrmr/#felimination.mrmr.MRMRCV)
 - [Hybrid Genetic Algorithms x Feature Importance selection](https://claudiosalvatorearcidiacono.github.io/felimination/reference/genetic_algorithms/#felimination.ga.HybridImportanceGACVFeatureSelector)
 
 
@@ -105,6 +106,76 @@ selector.ranking_
 selector.plot()
 ```
 ![RFECV fit plot](./docs/assets/rfecv_fit_plot.png)
+
+## Forward Feature Selection with MRMR
+
+In this section it will be illustrated how to use the `MRMRCV` class, which performs forward feature selection using the **Minimum Redundancy Maximum Relevance (MRMR)** criterion.
+
+MRMR scores candidate features by combining two quantities:
+
+- **Relevance**: how much information a feature shares with the target (mutual information by default).
+- **Redundancy**: how much information a feature shares with already-selected features.
+
+This actively avoids picking correlated features: once a relevant feature is selected, correlated copies are penalised and deprioritised.
+
+### Redundancy aggregation
+
+When multiple features have already been selected, each candidate's redundancy score is computed against each of them individually and then aggregated into a single value. The `redundancy_aggregation` parameter controls how:
+
+| Value                 | Behaviour                                                                                                        |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `'max'` **(default)** | Element-wise maximum — a candidate is penalised as soon as it is highly redundant with **any** selected feature. |
+| `'mean'`              | Element-wise mean — matches the formulation in the original MRMR paper (Peng et al., 2005).                      |
+| callable              | A custom function `f(matrix) -> array` where `matrix` has shape `(n_selected, n_features)`.                      |
+
+> **Note:** The default `'max'` deviates from the original MRMR paper, which uses the mean. `'max'` is chosen as the default because it more aggressively penalises features that duplicate information already captured by any single selected feature, which tends to work better in practice for forward selection with CV scoring.
+
+```python
+from sklearn.datasets import make_classification
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import StratifiedKFold
+
+from felimination.callbacks import plot_progress_callback
+from felimination.mrmr import MRMRCV
+
+
+X, y = make_classification(
+    n_samples=1000,
+    n_features=200,
+    n_informative=6,
+    n_redundant=10,
+    n_clusters_per_class=1,
+    random_state=42,
+    shuffle=False
+)
+
+model = LogisticRegression(random_state=42)
+
+selector = MRMRCV(
+    model,
+    step=0.2,
+    max_features_to_select=50,
+    callbacks=[plot_progress_callback],
+    scoring="roc_auc",
+    cv=StratifiedKFold(random_state=42, shuffle=True),
+    best_iteration_selection_criteria="mean_test_score",
+    random_state=42,
+    min_relevance=0.1,
+    redundancy_aggregation="max",  # default; use 'mean' for original MRMR behaviour
+
+)
+
+selector.fit(X, y)
+
+selector.support_
+# array([False, False,  True, False,  True, False, False, False,  True,
+#        False,  True, False,  True, False,  True, False, False, False, ...])
+
+selector.plot()
+```
+
+![MRMRCV fit plot](./docs/assets/mrmrcv_fit_plot.png)
+
 
 ## Genetic Algorithms
 In this section it will be illustrated how to use the `HybridImportanceGACVFeatureSelector` class.
