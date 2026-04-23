@@ -120,15 +120,38 @@ class MRMRRanker:
         information is used (the classifier vs. regressor estimator is
         chosen based on whether the target column is marked as
         categorical in ``discrete_features``).
+    redundancy_aggregation : {'max', 'mean'} or callable, default='max'
+        How to aggregate per-selected-feature redundancy scores into a
+        single redundancy value before combining with relevance:
+
+        - ``'max'``: take the element-wise maximum across all
+          already-selected features. A candidate is penalised as soon as
+          it is highly redundant with *any* selected feature, making the
+          criterion more conservative.
+        - ``'mean'``: take the element-wise mean, matching the
+          formulation in the original MRMR paper (Peng et al., 2005).
+        - callable: a function with signature
+          ``f(redundancy_matrix) -> ndarray`` of shape ``(n_features,)``,
+          where ``redundancy_matrix`` has shape
+          ``(n_selected, n_features)``. Rows correspond to
+          already-selected features; columns to candidate features.
+
+        .. note::
+            The default ``'max'`` deviates from the original MRMR paper,
+            which uses the mean. ``'max'`` is chosen as the default
+            because it more aggressively avoids adding features that
+            duplicate information already captured, which tends to work
+            better in practice for forward selection with CV scoring.
     min_relevance : float or None, default=0.05
         If set, features whose relevance score is strictly below this
         threshold are assigned ``-inf`` and will never be selected.
         Applied at every call, including the first (no selected features).
-    max_redundancy : float or None, default=0.3
-        If set, features whose mean redundancy with the already-selected
-        features exceeds this threshold are assigned ``-inf`` and will
-        not be selected in that round. Only applied when at least one
-        feature has already been selected.
+    max_redundancy : float or None, default=None
+        If set, features whose aggregated redundancy with the
+        already-selected features exceeds this threshold are assigned
+        ``-inf`` and will not be selected in that round. The aggregation
+        is controlled by ``redundancy_aggregation``. Only applied when at
+        least one feature has already been selected.
 
     Attributes
     ----------
@@ -146,11 +169,20 @@ class MRMRRanker:
         n_jobs=None,
         relevance_func=None,
         redundance_func=None,
+        redundancy_aggregation="max",
         min_relevance=0.05,
-        max_redundancy=0.3,
+        max_redundancy=None,
     ):
         if scheme not in ("ratio", "difference"):
             raise ValueError(f"scheme must be 'ratio' or 'difference', got {scheme!r}")
+        if not callable(redundancy_aggregation) and redundancy_aggregation not in (
+            "max",
+            "mean",
+        ):
+            raise ValueError(
+                f"redundancy_aggregation must be 'max', 'mean', or a callable, "
+                f"got {redundancy_aggregation!r}"
+            )
         self.regression = regression
         self.scheme = scheme
         self.n_neighbors = n_neighbors
@@ -159,6 +191,7 @@ class MRMRRanker:
         self.n_jobs = n_jobs
         self.relevance_func = relevance_func
         self.redundance_func = redundance_func
+        self.redundancy_aggregation = redundancy_aggregation
         self.min_relevance = min_relevance
         self.max_redundancy = max_redundancy
         self._reset()
@@ -166,6 +199,7 @@ class MRMRRanker:
     def _reset(self):
         self.relevance_ = None
         self._redundance_sum = None
+        self._redundance_max = None
         self._seen = set()
         self._discrete_mask = None
 
@@ -178,7 +212,10 @@ class MRMRRanker:
                 for i, col in enumerate(X.columns):
                     dtype = X[col].dtype
                     if (
-                        isinstance(dtype, (pd.CategoricalDtype, pd.StringDtype))
+                        isinstance(
+                            dtype,
+                            (pd.CategoricalDtype, pd.StringDtype, pd.BooleanDtype),
+                        )
                         or dtype == object
                     ):
                         mask[i] = True
@@ -240,6 +277,15 @@ class MRMRRanker:
         denom = np.where(np.abs(redundance) < 1e-10, 1e-10, redundance)
         return relevance / denom
 
+    def _aggregate_redundance(self):
+        agg = self.redundancy_aggregation
+        if agg == "mean":
+            return self._redundance_sum / max(len(self._seen), 1)
+        if agg == "max":
+            return self._redundance_max
+        matrix = np.vstack(self._redundance_rows)
+        return np.asarray(agg(matrix), dtype=float)
+
     def __call__(self, X, y, selected_idx):
         X_arr = _as_dense_array(X)
         n_features = X_arr.shape[1]
@@ -249,6 +295,8 @@ class MRMRRanker:
             self._discrete_mask = self._resolve_discrete_mask(X)
             self.relevance_ = self._compute_relevance(X_arr, y)
             self._redundance_sum = np.zeros(n_features, dtype=float)
+            self._redundance_max = np.full(n_features, -np.inf, dtype=float)
+            self._redundance_rows = []
             scores = self.relevance_.copy()
             if self.min_relevance is not None:
                 scores[self.relevance_ < self.min_relevance] = -np.inf
@@ -256,15 +304,18 @@ class MRMRRanker:
 
         for i in selected_idx:
             if i not in self._seen:
-                self._redundance_sum += self._compute_redundance(X_arr, i)
+                red = self._compute_redundance(X_arr, i)
+                self._redundance_sum += red
+                self._redundance_max = np.maximum(self._redundance_max, red)
+                self._redundance_rows.append(red)
                 self._seen.add(i)
 
-        mean_red = self._redundance_sum / max(len(self._seen), 1)
-        scores = self._combine(self.relevance_, mean_red)
+        agg_red = self._aggregate_redundance()
+        scores = self._combine(self.relevance_, agg_red)
         if self.min_relevance is not None:
             scores[self.relevance_ < self.min_relevance] = -np.inf
         if self.max_redundancy is not None:
-            scores[mean_red > self.max_redundancy] = -np.inf
+            scores[agg_red > self.max_redundancy] = -np.inf
         return scores
 
 
@@ -310,9 +361,12 @@ class MRMRCV(ForwardSelectorCV):
     redundance_func : callable, default=None
         Optional override for the redundance computation. See
         `MRMRRanker`.
+    redundancy_aggregation : {'max', 'mean'} or callable, default='max'
+        How to aggregate redundancy scores across selected features. See
+        `MRMRRanker`.
     min_relevance : float or None, default=0.05
         Minimum relevance threshold. See `MRMRRanker`.
-    max_redundancy : float or None, default=0.3
+    max_redundancy : float or None, default=None
         Maximum redundancy threshold. See `MRMRRanker`.
     callbacks : list of callable, default=None
         See `ForwardSelectorCV`.
@@ -354,8 +408,9 @@ class MRMRCV(ForwardSelectorCV):
         discrete_features="auto",
         relevance_func=None,
         redundance_func=None,
+        redundancy_aggregation="max",
         min_relevance=0.05,
-        max_redundancy=0.3,
+        max_redundancy=None,
         callbacks=None,
         best_iteration_selection_criteria="mean_test_score",
     ) -> None:
@@ -364,6 +419,7 @@ class MRMRCV(ForwardSelectorCV):
         self.discrete_features = discrete_features
         self.relevance_func = relevance_func
         self.redundance_func = redundance_func
+        self.redundancy_aggregation = redundancy_aggregation
         self.min_relevance = min_relevance
         self.max_redundancy = max_redundancy
         super().__init__(
@@ -385,6 +441,7 @@ class MRMRCV(ForwardSelectorCV):
                 n_jobs=n_jobs,
                 relevance_func=relevance_func,
                 redundance_func=redundance_func,
+                redundancy_aggregation=redundancy_aggregation,
                 min_relevance=min_relevance,
                 max_redundancy=max_redundancy,
             ),

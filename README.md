@@ -118,6 +118,18 @@ MRMR scores candidate features by combining two quantities:
 
 This actively avoids picking correlated features: once a relevant feature is selected, correlated copies are penalised and deprioritised.
 
+### Redundancy aggregation
+
+When multiple features have already been selected, each candidate's redundancy score is computed against each of them individually and then aggregated into a single value. The `redundancy_aggregation` parameter controls how:
+
+| Value                 | Behaviour                                                                                                        |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `'max'` **(default)** | Element-wise maximum — a candidate is penalised as soon as it is highly redundant with **any** selected feature. |
+| `'mean'`              | Element-wise mean — matches the formulation in the original MRMR paper (Peng et al., 2005).                      |
+| callable              | A custom function `f(matrix) -> array` where `matrix` has shape `(n_selected, n_features)`.                      |
+
+> **Note:** The default `'max'` deviates from the original MRMR paper, which uses the mean. `'max'` is chosen as the default because it more aggressively penalises features that duplicate information already captured by any single selected feature, which tends to work better in practice for forward selection with CV scoring.
+
 ```python
 from sklearn.datasets import make_classification
 from sklearn.linear_model import LogisticRegression
@@ -149,7 +161,7 @@ selector = MRMRCV(
     best_iteration_selection_criteria="mean_test_score",
     random_state=42,
     min_relevance=0.1,
-    max_redundancy=0.3,
+    redundancy_aggregation="max",  # default; use 'mean' for original MRMR behaviour
 
 )
 

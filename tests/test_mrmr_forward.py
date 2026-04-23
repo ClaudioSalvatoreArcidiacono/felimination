@@ -159,6 +159,17 @@ def test_discrete_mask_auto_dataframe_string_dtype_is_discrete():
     assert mask.tolist() == [False, True]
 
 
+def test_discrete_mask_auto_dataframe_boolean_dtype_is_discrete():
+    ranker = _make_ranker()
+    X = pd.DataFrame(
+        {
+            "num": [1.0, 2.0, 3.0],
+            "b": pd.array([True, False, True], dtype=pd.BooleanDtype()),
+        }
+    )
+    assert ranker._resolve_discrete_mask(X).tolist() == [False, True]
+
+
 def test_discrete_mask_auto_dataframe_numeric_only_all_continuous():
     ranker = _make_ranker()
     X = pd.DataFrame({"a": [1.0, 2.0], "b": [3, 4], "c": [5.0, 6.0]})
@@ -283,6 +294,8 @@ def test_scheme_ratio_combines_correctly(tiny_X, tiny_y):
         scheme="ratio",
         relevance_func=_const_rel(relevances),
         redundance_func=_const_red(redundances),
+        min_relevance=None,
+        max_redundancy=None,
     )
     ranker(tiny_X, tiny_y, [])
     scores = ranker(tiny_X, tiny_y, [0])
@@ -300,18 +313,92 @@ def test_scheme_ratio_near_zero_denominator_no_inf(tiny_X, tiny_y):
     assert np.all(np.isfinite(scores))
 
 
-def test_redundancy_mean_over_multiple_selected(tiny_X, tiny_y):
+def test_redundancy_aggregation_constant_redundance(tiny_X, tiny_y):
     redundances = np.array([0.4, 0.2, 0.1])
     ranker = MRMRRanker(
         scheme="difference",
         relevance_func=_const_rel([1.0, 1.0, 1.0]),
         redundance_func=_const_red(redundances),
+        min_relevance=None,
+        max_redundancy=None,
     )
     ranker(tiny_X, tiny_y, [])
-    # Both selected features return the same redundances vector,
-    # so mean_red = (redundances + redundances) / 2 = redundances.
+    # Both selected features return the same redundances vector, so
+    # max and mean both reduce to that vector.
     scores = ranker(tiny_X, tiny_y, [0, 1])
     np.testing.assert_allclose(scores, 1.0 - redundances)
+
+
+def test_redundancy_aggregation_max_picks_worst(tiny_X, tiny_y):
+    call_count = [0]
+
+    def redundance_func(X, y_feat):
+        call_count[0] += 1
+        # first selected feature → high redundancy for feature 2
+        # second selected feature → low redundancy for feature 2
+        if call_count[0] == 1:
+            return np.array([0.1, 0.1, 0.9])
+        return np.array([0.1, 0.1, 0.05])
+
+    ranker = MRMRRanker(
+        scheme="difference",
+        relevance_func=_const_rel([1.0, 1.0, 1.0]),
+        redundance_func=redundance_func,
+        redundancy_aggregation="max",
+        min_relevance=None,
+        max_redundancy=None,
+    )
+    ranker(tiny_X, tiny_y, [])
+    scores = ranker(tiny_X, tiny_y, [0, 1])
+    # max redundancy for feature 2 is 0.9, not the mean (0.475)
+    np.testing.assert_allclose(scores[2], 1.0 - 0.9)
+
+
+def test_redundancy_aggregation_mean_averages_correctly(tiny_X, tiny_y):
+    call_count = [0]
+
+    def redundance_func(X, y_feat):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            return np.array([0.1, 0.1, 0.9])
+        return np.array([0.1, 0.1, 0.1])
+
+    ranker = MRMRRanker(
+        scheme="difference",
+        relevance_func=_const_rel([1.0, 1.0, 1.0]),
+        redundance_func=redundance_func,
+        redundancy_aggregation="mean",
+        min_relevance=None,
+        max_redundancy=None,
+    )
+    ranker(tiny_X, tiny_y, [])
+    scores = ranker(tiny_X, tiny_y, [0, 1])
+    # mean redundancy for feature 2 is (0.9 + 0.1) / 2 = 0.5
+    np.testing.assert_allclose(scores[2], 1.0 - 0.5)
+
+
+def test_redundancy_aggregation_callable(tiny_X, tiny_y):
+    redundances = np.array([0.4, 0.2, 0.1])
+
+    def min_agg(matrix):
+        return matrix.min(axis=0)
+
+    ranker = MRMRRanker(
+        scheme="difference",
+        relevance_func=_const_rel([1.0, 1.0, 1.0]),
+        redundance_func=_const_red(redundances),
+        redundancy_aggregation=min_agg,
+        min_relevance=None,
+        max_redundancy=None,
+    )
+    ranker(tiny_X, tiny_y, [])
+    scores = ranker(tiny_X, tiny_y, [0])
+    np.testing.assert_allclose(scores, 1.0 - redundances)
+
+
+def test_redundancy_aggregation_invalid_raises():
+    with pytest.raises(ValueError, match="redundancy_aggregation"):
+        MRMRRanker(redundancy_aggregation="median")
 
 
 def test_seen_set_prevents_double_counting(tiny_X, tiny_y):
@@ -431,14 +518,14 @@ def test_custom_redundance_func_is_called(tiny_X, tiny_y):
 
 
 def test_mrmr_ranker_classif_returns_valid_scores(tiny_X, tiny_y):
-    ranker = MRMRRanker(regression=False, n_neighbors=2)
+    ranker = MRMRRanker(regression=False, n_neighbors=2, min_relevance=None)
     scores = ranker(tiny_X, tiny_y, [])
     assert scores.shape == (3,)
     assert np.all(scores >= 0)
 
 
 def test_mrmr_ranker_regression_returns_valid_scores(tiny_X, tiny_y):
-    ranker = MRMRRanker(regression=True, n_neighbors=2)
+    ranker = MRMRRanker(regression=True, n_neighbors=2, min_relevance=None)
     scores = ranker(tiny_X, tiny_y, [])
     assert scores.shape == (3,)
     assert np.all(scores >= 0)
@@ -826,21 +913,38 @@ def test_mrmrcv_params_forwarded_to_ranker():
         n_neighbors=5,
         min_relevance=0.1,
         max_redundancy=0.8,
+        redundancy_aggregation="mean",
     )
     ranker = selector.importance_getter
     assert ranker.scheme == "ratio"
     assert ranker.n_neighbors == 5
     assert ranker.min_relevance == 0.1
     assert ranker.max_redundancy == 0.8
+    assert ranker.redundancy_aggregation == "mean"
 
 
 def test_mrmrcv_default_scheme_is_difference():
     assert MRMRCV(LogisticRegression()).importance_getter.scheme == "difference"
 
 
+def test_mrmrcv_default_redundancy_aggregation_is_max():
+    assert (
+        MRMRCV(LogisticRegression()).importance_getter.redundancy_aggregation == "max"
+    )
+
+
+def test_mrmrcv_default_max_redundancy_is_none():
+    assert MRMRCV(LogisticRegression()).importance_getter.max_redundancy is None
+
+
 def test_mrmrcv_invalid_scheme_raises():
     with pytest.raises(ValueError, match="scheme"):
         MRMRCV(LogisticRegression(), scheme="bad")
+
+
+def test_mrmrcv_invalid_redundancy_aggregation_raises():
+    with pytest.raises(ValueError, match="redundancy_aggregation"):
+        MRMRCV(LogisticRegression(), redundancy_aggregation="median")
 
 
 def test_mrmrcv_stores_params_on_self():
@@ -850,8 +954,10 @@ def test_mrmrcv_stores_params_on_self():
         min_relevance=0.05,
         max_redundancy=0.9,
         discrete_features=True,
+        redundancy_aggregation="mean",
     )
     assert selector.scheme == "ratio"
     assert selector.min_relevance == 0.05
     assert selector.max_redundancy == 0.9
     assert selector.discrete_features is True
+    assert selector.redundancy_aggregation == "mean"
