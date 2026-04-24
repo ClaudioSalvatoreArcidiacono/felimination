@@ -11,8 +11,10 @@ This module contains:
 
 import numpy as np
 import pandas as pd
-from sklearn.base import is_classifier
+from sklearn.base import clone, is_classifier
 from sklearn.feature_selection import mutual_info_classif, mutual_info_regression
+from sklearn.impute import SimpleImputer
+from sklearn.model_selection import train_test_split
 
 from felimination.forward import ForwardSelectorCV
 
@@ -142,16 +144,51 @@ class MRMRRanker:
         >    because it more aggressively avoids adding features that
         >    duplicate information already captured, which tends to work
         >    better in practice for forward selection with CV scoring.
-    min_relevance : float or None, default=0.05
-        If set, features whose relevance score is strictly below this
-        threshold are assigned ``-inf`` and will never be selected.
-        Applied at every call, including the first (no selected features).
+    min_relevance_perc : float or None, default=0.01
+        If set, features are filtered based on cumulative relevance. After
+        computing relevance scores, a minimum relevance threshold is derived
+        as ``min_relevance_perc * sum(relevance scores)``. Features are then
+        ordered by relevance ascending and their cumulative relevance is
+        computed; any feature whose cumulative relevance (from the least
+        relevant up to and including itself) is strictly below the threshold
+        is assigned ``-inf`` and will never be selected. This removes the
+        low-relevance tail that together contributes less than
+        ``min_relevance_perc`` of the total relevance.
     max_redundancy : float or None, default=None
         If set, features whose aggregated redundancy with the
         already-selected features exceeds this threshold are assigned
         ``-inf`` and will not be selected in that round. The aggregation
         is controlled by ``redundancy_aggregation``. Only applied when at
         least one feature has already been selected.
+    discrete_imputer : sklearn-compatible transformer or None, default=None
+        Imputer applied to discrete (categorical) feature columns before
+        encoding. When ``None``, defaults to
+        ``SimpleImputer(strategy='constant', fill_value='MISSING')``,
+        replacing missing values with the string ``'MISSING'`` (treated
+        as an additional category). Pass any sklearn-compatible transformer
+        with ``fit``/``transform``. Ignored when there are no discrete
+        columns.
+    continuous_imputer : sklearn-compatible transformer or None, default=None
+        Imputer applied to continuous (numeric) feature columns before the
+        mutual information computation. When ``None``, defaults to
+        ``SimpleImputer(strategy='median')``. Pass any sklearn-compatible
+        transformer with ``fit``/``transform``. Ignored when there are no
+        continuous columns. For arrays with non-object ``dtype``, applied
+        to all columns regardless of ``discrete_features``.
+    max_samples : int, float or None, default=None
+        Number of samples used when computing mutual information scores.
+        Imputers are still fitted on the full training set; only the MI
+        scoring (relevance on the first call and redundance on subsequent
+        calls) uses the subsample.
+
+        - ``None``: use all samples (no subsampling).
+        - ``int``: use exactly this many samples (capped at ``n_samples``).
+        - ``float`` in ``(0.0, 1.0]``: use this fraction of the training
+          set (at least 1 sample).
+
+        The same row indices are drawn once per forward-selection run
+        (controlled by ``random_state``) and reused for every subsequent
+        redundance computation, keeping relevance and redundance comparable.
 
     Attributes
     ----------
@@ -170,8 +207,11 @@ class MRMRRanker:
         relevance_func=None,
         redundance_func=None,
         redundancy_aggregation="max",
-        min_relevance=0.05,
+        min_relevance_perc=0.01,
         max_redundancy=None,
+        discrete_imputer=None,
+        continuous_imputer=None,
+        max_samples=None,
     ):
         if scheme not in ("ratio", "difference"):
             raise ValueError(f"scheme must be 'ratio' or 'difference', got {scheme!r}")
@@ -192,8 +232,11 @@ class MRMRRanker:
         self.relevance_func = relevance_func
         self.redundance_func = redundance_func
         self.redundancy_aggregation = redundancy_aggregation
-        self.min_relevance = min_relevance
+        self.min_relevance_perc = min_relevance_perc
         self.max_redundancy = max_redundancy
+        self.discrete_imputer = discrete_imputer
+        self.continuous_imputer = continuous_imputer
+        self.max_samples = max_samples
         self._reset()
 
     def _reset(self):
@@ -202,6 +245,10 @@ class MRMRRanker:
         self._redundance_max = None
         self._seen = set()
         self._discrete_mask = None
+        self._low_relevance_mask = None
+        self._fitted_discrete_imputer = None
+        self._fitted_continuous_imputer = None
+        self._sampled_indices = None
 
     def _resolve_discrete_mask(self, X):
         n = X.shape[1]
@@ -235,6 +282,80 @@ class MRMRRanker:
         mask[arr] = True
         return mask
 
+    def _draw_sample_indices(self, n_rows, y=None):
+        if self.max_samples is None:
+            return None
+        if isinstance(self.max_samples, float):
+            n = max(1, int(n_rows * self.max_samples))
+        else:
+            n = min(int(self.max_samples), n_rows)
+        if n >= n_rows:
+            return None
+        stratify = np.asarray(y) if not self.regression and y is not None else None
+        sampled, _ = train_test_split(
+            np.arange(n_rows),
+            train_size=n,
+            stratify=stratify,
+            random_state=self.random_state,
+        )
+        return sampled
+
+    def _fit_imputers(self, X_arr):
+        self._fitted_discrete_imputer = None
+        self._fitted_continuous_imputer = None
+        disc_cols = np.where(self._discrete_mask)[0]
+        cont_cols = np.where(~self._discrete_mask)[0]
+        if len(disc_cols) > 0:
+            imp = self.discrete_imputer
+            if imp is None:
+                imp = SimpleImputer(strategy="constant", fill_value="MISSING")
+            # astype(object) keeps NaN detectable while handling numeric discrete cols
+            self._fitted_discrete_imputer = clone(imp).fit(
+                X_arr[:, disc_cols].astype(object)
+            )
+        if len(cont_cols) > 0:
+            imp = self.continuous_imputer
+            if imp is None:
+                imp = SimpleImputer(strategy="median")
+            self._fitted_continuous_imputer = clone(imp).fit(
+                self._to_float_array(X_arr[:, cont_cols])
+            )
+
+    def _to_float_array(self, arr):
+        if arr.dtype != object:
+            return arr.astype(float)
+        n_rows, n_cols = arr.shape
+        result = np.empty((n_rows, n_cols), dtype=float)
+        for j in range(n_cols):
+            result[:, j] = pd.to_numeric(arr[:, j], errors="coerce")
+        return result
+
+    def _impute_X(self, X_arr):
+        disc_cols = np.where(self._discrete_mask)[0]
+        cont_cols = np.where(~self._discrete_mask)[0]
+        has_disc = len(disc_cols) > 0 and self._fitted_discrete_imputer is not None
+        has_cont = len(cont_cols) > 0 and self._fitted_continuous_imputer is not None
+        if not has_disc and not has_cont:
+            return X_arr
+        # When discrete columns are present in a float array, promote to object so
+        # the string fill value ('MISSING') can coexist with float continuous columns.
+        result = (
+            X_arr.astype(object) if X_arr.dtype != object and has_disc else X_arr.copy()
+        )
+        if has_disc:
+            result[:, disc_cols] = self._fitted_discrete_imputer.transform(
+                result[:, disc_cols].astype(object)
+            )
+        if has_cont:
+            imputed = self._fitted_continuous_imputer.transform(
+                self._to_float_array(result[:, cont_cols])
+            )
+            result[:, cont_cols] = imputed
+        if not has_disc and X_arr.dtype != object:
+            # Pure float array with only continuous imputation — keep float dtype
+            return result.astype(float)
+        return result
+
     def _default_relevance(self, X_arr, y):
         mi_func = mutual_info_regression if self.regression else mutual_info_classif
         return mi_func(
@@ -246,12 +367,16 @@ class MRMRRanker:
             n_jobs=self.n_jobs,
         )
 
-    def _default_redundance(self, X_arr, y_feature, target_is_discrete):
+    def _default_redundance(
+        self, X_arr, y_feature, target_is_discrete, discrete_mask=None
+    ):
         mi_func = mutual_info_classif if target_is_discrete else mutual_info_regression
+        if discrete_mask is None:
+            discrete_mask = self._discrete_mask
         return mi_func(
             X_arr,
             y_feature,
-            discrete_features=self._discrete_mask,
+            discrete_features=discrete_mask,
             n_neighbors=self.n_neighbors,
             random_state=self.random_state,
             n_jobs=self.n_jobs,
@@ -262,10 +387,24 @@ class MRMRRanker:
             return np.asarray(self.relevance_func(X_arr, y), dtype=float)
         return np.asarray(self._default_relevance(X_arr, y), dtype=float)
 
-    def _compute_redundance(self, X_arr, idx):
+    def _compute_redundance(self, X_arr, idx, candidate_mask=None):
+        n_features = X_arr.shape[1]
         y_feature = X_arr[:, idx]
         if self.redundance_func is not None:
             return np.asarray(self.redundance_func(X_arr, y_feature), dtype=float)
+        if candidate_mask is not None:
+            red_sub = np.asarray(
+                self._default_redundance(
+                    X_arr[:, candidate_mask],
+                    y_feature,
+                    self._discrete_mask[idx],
+                    self._discrete_mask[candidate_mask],
+                ),
+                dtype=float,
+            )
+            red = np.zeros(n_features, dtype=float)
+            red[candidate_mask] = red_sub
+            return red
         return np.asarray(
             self._default_redundance(X_arr, y_feature, self._discrete_mask[idx]),
             dtype=float,
@@ -307,20 +446,40 @@ class MRMRRanker:
         if not selected_idx:
             self._reset()
             self._discrete_mask = self._resolve_discrete_mask(X)
+            self._fit_imputers(X_arr)
+            X_arr = self._impute_X(X_arr)
             X_arr = self._encode_X(X_arr)
-            self.relevance_ = self._compute_relevance(X_arr, y)
+            self._sampled_indices = self._draw_sample_indices(X_arr.shape[0], y)
+            if self._sampled_indices is not None:
+                X_sample = X_arr[self._sampled_indices]
+                y_sample = np.asarray(y)[self._sampled_indices]
+            else:
+                X_sample, y_sample = X_arr, y
+            self.relevance_ = self._compute_relevance(X_sample, y_sample)
             self._redundance_sum = np.zeros(n_features, dtype=float)
             self._redundance_max = np.full(n_features, -np.inf, dtype=float)
             self._redundance_rows = []
             scores = self.relevance_.copy()
-            if self.min_relevance is not None:
-                scores[self.relevance_ < self.min_relevance] = -np.inf
+            if self.min_relevance_perc is not None:
+                total = self.relevance_.sum()
+                min_rel = self.min_relevance_perc * total
+                sorted_idx = np.argsort(self.relevance_)
+                cumsum = np.cumsum(self.relevance_[sorted_idx])
+                self._low_relevance_mask = np.zeros(n_features, dtype=bool)
+                self._low_relevance_mask[sorted_idx[cumsum < min_rel]] = True
+                scores[self._low_relevance_mask] = -np.inf
             return scores
 
+        X_arr = self._impute_X(X_arr)
         X_arr = self._encode_X(X_arr)
+        if self._sampled_indices is not None:
+            X_arr = X_arr[self._sampled_indices]
+        candidate_mask = (
+            ~self._low_relevance_mask if self._low_relevance_mask is not None else None
+        )
         for i in selected_idx:
             if i not in self._seen:
-                red = self._compute_redundance(X_arr, i)
+                red = self._compute_redundance(X_arr, i, candidate_mask)
                 self._redundance_sum += red
                 self._redundance_max = np.maximum(self._redundance_max, red)
                 self._redundance_rows.append(red)
@@ -328,8 +487,8 @@ class MRMRRanker:
 
         agg_red = self._aggregate_redundance()
         scores = self._combine(self.relevance_, agg_red)
-        if self.min_relevance is not None:
-            scores[self.relevance_ < self.min_relevance] = -np.inf
+        if self._low_relevance_mask is not None:
+            scores[self._low_relevance_mask] = -np.inf
         if self.max_redundancy is not None:
             scores[agg_red > self.max_redundancy] = -np.inf
         return scores
@@ -456,16 +615,33 @@ class MRMRCV(ForwardSelectorCV):
         >    because it more aggressively avoids adding features that
         >    duplicate information already captured, which tends to work
         >    better in practice for forward selection with CV scoring.
-    min_relevance : float or None, default=0.05
-        If set, features whose relevance score is strictly below this
-        threshold are assigned ``-inf`` and will never be selected.
-        Applied at every step, including the first (no selected features).
+    min_relevance_perc : float or None, default=0.01
+        If set, features are filtered based on cumulative relevance. After
+        computing relevance scores, a minimum relevance threshold is derived
+        as ``min_relevance_perc * sum(relevance scores)``. Features are then
+        ordered by relevance ascending and their cumulative relevance is
+        computed; any feature whose cumulative relevance (from the least
+        relevant up to and including itself) is strictly below the threshold
+        is assigned ``-inf`` and will never be selected. This removes the
+        low-relevance tail that together contributes less than
+        ``min_relevance_perc`` of the total relevance.
     max_redundancy : float or None, default=None
         If set, features whose aggregated redundancy with the
         already-selected features exceeds this threshold are assigned
         ``-inf`` and will not be selected in that round. The aggregation
         is controlled by ``redundancy_aggregation``. Only applied when at
         least one feature has already been selected.
+    discrete_imputer : sklearn-compatible transformer or None, default=None
+        Forwarded to :class:`MRMRRanker`. Imputer for discrete (categorical)
+        columns. When ``None``, defaults to
+        ``SimpleImputer(strategy='constant', fill_value='MISSING')``.
+    continuous_imputer : sklearn-compatible transformer or None, default=None
+        Forwarded to :class:`MRMRRanker`. Imputer for continuous (numeric)
+        columns. When ``None``, defaults to ``SimpleImputer(strategy='median')``.
+    max_samples : int, float or None, default=None
+        Forwarded to :class:`MRMRRanker`. Number of samples used when
+        computing mutual information scores. ``None`` means all samples.
+        See :class:`MRMRRanker` for the full description.
     callbacks : list of callable, default=None
         List of callables called at the end of each evaluated step. Each
         callable receives ``(selector, scores)`` where ``scores`` is the
@@ -512,8 +688,11 @@ class MRMRCV(ForwardSelectorCV):
         relevance_func=None,
         redundance_func=None,
         redundancy_aggregation="max",
-        min_relevance=0.05,
+        min_relevance_perc=0.01,
         max_redundancy=None,
+        discrete_imputer=None,
+        continuous_imputer=None,
+        max_samples=None,
         callbacks=None,
         best_iteration_selection_criteria="mean_test_score",
     ) -> None:
@@ -523,8 +702,11 @@ class MRMRCV(ForwardSelectorCV):
         self.relevance_func = relevance_func
         self.redundance_func = redundance_func
         self.redundancy_aggregation = redundancy_aggregation
-        self.min_relevance = min_relevance
+        self.min_relevance_perc = min_relevance_perc
         self.max_redundancy = max_redundancy
+        self.discrete_imputer = discrete_imputer
+        self.continuous_imputer = continuous_imputer
+        self.max_samples = max_samples
         super().__init__(
             estimator,
             step=step,
@@ -545,8 +727,11 @@ class MRMRCV(ForwardSelectorCV):
                 relevance_func=relevance_func,
                 redundance_func=redundance_func,
                 redundancy_aggregation=redundancy_aggregation,
-                min_relevance=min_relevance,
+                min_relevance_perc=min_relevance_perc,
                 max_redundancy=max_redundancy,
+                discrete_imputer=discrete_imputer,
+                continuous_imputer=continuous_imputer,
+                max_samples=max_samples,
             ),
             callbacks=callbacks,
             best_iteration_selection_criteria=best_iteration_selection_criteria,

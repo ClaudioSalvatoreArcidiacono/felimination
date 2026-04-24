@@ -323,7 +323,7 @@ def test_scheme_ratio_combines_correctly(tiny_X, tiny_y):
         scheme="ratio",
         relevance_func=_const_rel(relevances),
         redundance_func=_const_red(redundances),
-        min_relevance=None,
+        min_relevance_perc=None,
         max_redundancy=None,
     )
     ranker(tiny_X, tiny_y, [])
@@ -348,7 +348,7 @@ def test_redundancy_aggregation_constant_redundance(tiny_X, tiny_y):
         scheme="difference",
         relevance_func=_const_rel([1.0, 1.0, 1.0]),
         redundance_func=_const_red(redundances),
-        min_relevance=None,
+        min_relevance_perc=None,
         max_redundancy=None,
     )
     ranker(tiny_X, tiny_y, [])
@@ -374,7 +374,7 @@ def test_redundancy_aggregation_max_picks_worst(tiny_X, tiny_y):
         relevance_func=_const_rel([1.0, 1.0, 1.0]),
         redundance_func=redundance_func,
         redundancy_aggregation="max",
-        min_relevance=None,
+        min_relevance_perc=None,
         max_redundancy=None,
     )
     ranker(tiny_X, tiny_y, [])
@@ -397,7 +397,7 @@ def test_redundancy_aggregation_mean_averages_correctly(tiny_X, tiny_y):
         relevance_func=_const_rel([1.0, 1.0, 1.0]),
         redundance_func=redundance_func,
         redundancy_aggregation="mean",
-        min_relevance=None,
+        min_relevance_perc=None,
         max_redundancy=None,
     )
     ranker(tiny_X, tiny_y, [])
@@ -417,7 +417,7 @@ def test_redundancy_aggregation_callable(tiny_X, tiny_y):
         relevance_func=_const_rel([1.0, 1.0, 1.0]),
         redundance_func=_const_red(redundances),
         redundancy_aggregation=min_agg,
-        min_relevance=None,
+        min_relevance_perc=None,
         max_redundancy=None,
     )
     ranker(tiny_X, tiny_y, [])
@@ -451,9 +451,12 @@ def test_seen_set_prevents_double_counting(tiny_X, tiny_y):
 
 
 def test_min_relevance_masks_on_first_call(tiny_X, tiny_y):
+    # relevances [0.8, 0.3, 0.5], sum=1.6, threshold=0.25*1.6=0.4
+    # sorted ascending: [0.3, 0.5, 0.8], cumsum=[0.3, 0.8, 1.6]
+    # 0.3 < 0.4 → feature 1 discarded
     ranker = MRMRRanker(
         relevance_func=_const_rel([0.8, 0.3, 0.5]),
-        min_relevance=0.4,
+        min_relevance_perc=0.25,
     )
     scores = ranker(tiny_X, tiny_y, [])
     assert scores[0] == pytest.approx(0.8)
@@ -466,7 +469,7 @@ def test_min_relevance_masks_on_subsequent_call(tiny_X, tiny_y):
         scheme="difference",
         relevance_func=_const_rel([0.8, 0.3, 0.5]),
         redundance_func=_const_red([0.1, 0.1, 0.1]),
-        min_relevance=0.4,
+        min_relevance_perc=0.25,
     )
     ranker(tiny_X, tiny_y, [])
     scores = ranker(tiny_X, tiny_y, [0])
@@ -499,17 +502,20 @@ def test_max_redundancy_masks_on_subsequent_call(tiny_X, tiny_y):
 
 
 def test_both_thresholds_combined(tiny_X, tiny_y):
+    # relevances [0.8, 0.2, 0.6], sum=1.6, threshold=0.2*1.6=0.32
+    # sorted ascending: [0.2, 0.6, 0.8], cumsum=[0.2, 0.8, 1.6]
+    # 0.2 < 0.32 → feature 1 discarded by min_relevance_perc
     ranker = MRMRRanker(
         scheme="difference",
         relevance_func=_const_rel([0.8, 0.2, 0.6]),
         redundance_func=_const_red([0.1, 0.1, 0.9]),
-        min_relevance=0.3,
+        min_relevance_perc=0.2,
         max_redundancy=0.5,
     )
     ranker(tiny_X, tiny_y, [])
     scores = ranker(tiny_X, tiny_y, [0])
     assert scores[0] == pytest.approx(0.7)  # passes both thresholds
-    assert scores[1] == -np.inf  # fails min_relevance (0.2 < 0.3)
+    assert scores[1] == -np.inf  # fails min_relevance_perc (cumsum 0.2 < 0.32)
     assert scores[2] == -np.inf  # fails max_redundancy (0.9 > 0.5)
 
 
@@ -547,14 +553,14 @@ def test_custom_redundance_func_is_called(tiny_X, tiny_y):
 
 
 def test_mrmr_ranker_classif_returns_valid_scores(tiny_X, tiny_y):
-    ranker = MRMRRanker(regression=False, n_neighbors=2, min_relevance=None)
+    ranker = MRMRRanker(regression=False, n_neighbors=2, min_relevance_perc=None)
     scores = ranker(tiny_X, tiny_y, [])
     assert scores.shape == (3,)
     assert np.all(scores >= 0)
 
 
 def test_mrmr_ranker_regression_returns_valid_scores(tiny_X, tiny_y):
-    ranker = MRMRRanker(regression=True, n_neighbors=2, min_relevance=None)
+    ranker = MRMRRanker(regression=True, n_neighbors=2, min_relevance_perc=None)
     scores = ranker(tiny_X, tiny_y, [])
     assert scores.shape == (3,)
     assert np.all(scores >= 0)
@@ -940,14 +946,14 @@ def test_mrmrcv_params_forwarded_to_ranker():
         LogisticRegression(),
         scheme="ratio",
         n_neighbors=5,
-        min_relevance=0.1,
+        min_relevance_perc=0.1,
         max_redundancy=0.8,
         redundancy_aggregation="mean",
     )
     ranker = selector.importance_getter
     assert ranker.scheme == "ratio"
     assert ranker.n_neighbors == 5
-    assert ranker.min_relevance == 0.1
+    assert ranker.min_relevance_perc == 0.1
     assert ranker.max_redundancy == 0.8
     assert ranker.redundancy_aggregation == "mean"
 
@@ -980,16 +986,201 @@ def test_mrmrcv_stores_params_on_self():
     selector = MRMRCV(
         LogisticRegression(),
         scheme="ratio",
-        min_relevance=0.05,
+        min_relevance_perc=0.05,
         max_redundancy=0.9,
         discrete_features=True,
         redundancy_aggregation="mean",
     )
     assert selector.scheme == "ratio"
-    assert selector.min_relevance == 0.05
+    assert selector.min_relevance_perc == 0.05
     assert selector.max_redundancy == 0.9
     assert selector.discrete_features is True
     assert selector.redundancy_aggregation == "mean"
+
+
+# ===========================================================================
+# MRMRRanker – imputation
+# ===========================================================================
+
+
+def test_discrete_imputer_fills_none_in_object_column():
+    received = []
+
+    def relevance_func(X, y):
+        received.append(X.copy())
+        return np.ones(X.shape[1])
+
+    X = pd.DataFrame(
+        {"num": [1.0, 2.0, 3.0, 4.0, 5.0], "cat": ["a", None, "b", "a", "b"]}
+    )
+    y = np.array([0, 1, 0, 1, 0])
+    ranker = MRMRRanker(relevance_func=relevance_func, min_relevance_perc=None)
+    ranker(X, y, [])
+    encoded = received[0]
+    # None was imputed with 'MISSING' and factorized to a non-negative code
+    assert not np.any(np.isnan(encoded))
+    assert np.all(encoded[:, 1] >= 0)
+
+
+def test_discrete_imputer_fills_nan_in_categorical_column():
+    received = []
+
+    def relevance_func(X, y):
+        received.append(X.copy())
+        return np.ones(X.shape[1])
+
+    X = pd.DataFrame(
+        {
+            "num": [1.0, 2.0, 3.0, 4.0, 5.0],
+            "cat": pd.Categorical(["a", None, "b", "a", "b"]),
+        }
+    )
+    y = np.array([0, 1, 0, 1, 0])
+    ranker = MRMRRanker(relevance_func=relevance_func, min_relevance_perc=None)
+    ranker(X, y, [])
+    encoded = received[0]
+    # NaN in Categorical is imputed with 'MISSING' → valid factorize code (>= 0)
+    assert not np.any(np.isnan(encoded))
+    assert np.all(encoded[:, 1] >= 0)
+
+
+def test_discrete_imputer_fills_nan_in_float_discrete_column():
+    received = []
+
+    def relevance_func(X, y):
+        received.append(X.copy())
+        return np.ones(X.shape[1])
+
+    # Float array with col 0 explicitly marked as discrete
+    X = np.array([[0.0, 1.0], [1.0, 2.0], [np.nan, 3.0], [1.0, 4.0], [0.0, 5.0]])
+    y = np.array([0, 1, 0, 1, 0])
+    ranker = MRMRRanker(
+        relevance_func=relevance_func,
+        discrete_features=np.array([True, False]),
+        min_relevance_perc=None,
+    )
+    ranker(X, y, [])
+    encoded = received[0]
+    assert not np.any(np.isnan(encoded))
+    # Row 2 col 0 was NaN → 'MISSING' → a valid factorize code (>= 0)
+    assert encoded[2, 0] >= 0
+
+
+def test_continuous_imputer_fills_nan_with_median():
+    received = []
+
+    def relevance_func(X, y):
+        received.append(X.copy())
+        return np.ones(X.shape[1])
+
+    # col 1: non-NaN values are [3, 5, 7, 9] → median = 6.0
+    X = np.array([[1.0, np.nan], [2.0, 3.0], [3.0, 5.0], [4.0, 7.0], [5.0, 9.0]])
+    y = np.array([0, 1, 0, 1, 0])
+    ranker = MRMRRanker(relevance_func=relevance_func, min_relevance_perc=None)
+    ranker(X, y, [])
+    encoded = received[0]
+    assert not np.any(np.isnan(encoded))
+    assert encoded[0, 1] == pytest.approx(6.0)
+
+
+def test_imputers_applied_on_subsequent_calls():
+    received_red = []
+
+    def relevance_func(X, y):
+        return np.ones(X.shape[1])
+
+    def redundance_func(X, y_feat):
+        received_red.append(X.copy())
+        return np.ones(X.shape[1])
+
+    X = np.array([[1.0, np.nan], [2.0, 3.0], [3.0, 5.0], [4.0, 7.0], [5.0, 9.0]])
+    y = np.array([0, 1, 0, 1, 0])
+    ranker = MRMRRanker(
+        relevance_func=relevance_func,
+        redundance_func=redundance_func,
+        min_relevance_perc=None,
+    )
+    ranker(X, y, [])
+    ranker(X, y, [0])
+    assert not np.any(np.isnan(received_red[0]))
+
+
+def test_custom_discrete_imputer_is_used():
+    from sklearn.impute import SimpleImputer as SI
+
+    received = []
+
+    def relevance_func(X, y):
+        received.append(X.copy())
+        return np.ones(X.shape[1])
+
+    X = pd.DataFrame(
+        {"num": [1.0, 2.0, 3.0, 4.0, 5.0], "cat": ["a", None, "b", "a", "b"]}
+    )
+    y = np.array([0, 1, 0, 1, 0])
+    ranker = MRMRRanker(
+        relevance_func=relevance_func,
+        discrete_imputer=SI(strategy="constant", fill_value="UNKNOWN"),
+        min_relevance_perc=None,
+    )
+    ranker(X, y, [])
+    # 'UNKNOWN' imputed value gets a factorize code ≥ 0
+    assert np.all(received[0][:, 1] >= 0)
+
+
+def test_custom_continuous_imputer_is_used():
+    from sklearn.impute import SimpleImputer as SI
+
+    received = []
+
+    def relevance_func(X, y):
+        received.append(X.copy())
+        return np.ones(X.shape[1])
+
+    # col 1 non-NaN: [1, 1, 1, 10] → mean=3.25, median=1.0
+    X = np.array([[1.0, np.nan], [2.0, 1.0], [3.0, 1.0], [4.0, 1.0], [5.0, 10.0]])
+    y = np.array([0, 1, 0, 1, 0])
+    ranker = MRMRRanker(
+        relevance_func=relevance_func,
+        continuous_imputer=SI(strategy="mean"),
+        min_relevance_perc=None,
+    )
+    ranker(X, y, [])
+    assert received[0][0, 1] == pytest.approx(3.25)
+
+
+# ===========================================================================
+# MRMRCV – imputation parameter forwarding
+# ===========================================================================
+
+
+def test_mrmrcv_imputer_params_forwarded_to_ranker():
+    from sklearn.impute import SimpleImputer as SI
+
+    disc_imp = SI(strategy="constant", fill_value="N/A")
+    cont_imp = SI(strategy="mean")
+    selector = MRMRCV(
+        LogisticRegression(),
+        discrete_imputer=disc_imp,
+        continuous_imputer=cont_imp,
+    )
+    ranker = selector.importance_getter
+    assert ranker.discrete_imputer is disc_imp
+    assert ranker.continuous_imputer is cont_imp
+
+
+def test_mrmrcv_imputer_params_stored_on_self():
+    from sklearn.impute import SimpleImputer as SI
+
+    disc_imp = SI(strategy="constant", fill_value="N/A")
+    cont_imp = SI(strategy="mean")
+    selector = MRMRCV(
+        LogisticRegression(),
+        discrete_imputer=disc_imp,
+        continuous_imputer=cont_imp,
+    )
+    assert selector.discrete_imputer is disc_imp
+    assert selector.continuous_imputer is cont_imp
 
 
 def test_mrmrcv_auto_discrete_mask_from_dataframe_object_columns():
@@ -1013,6 +1204,161 @@ def test_mrmrcv_auto_discrete_mask_from_dataframe_object_columns():
         max_features_to_select=2,
         cv=2,
         random_state=0,
-        min_relevance=None,
+        min_relevance_perc=None,
     ).fit(X, y)
     assert selector.importance_getter._discrete_mask.tolist() == [False, False, True]
+
+
+# ===========================================================================
+# max_samples – subsampling for MI scoring
+# ===========================================================================
+
+
+def test_max_samples_int_limits_rows_seen_by_relevance_func():
+    received = []
+
+    def relevance_func(X, _):
+        received.append(X.shape[0])
+        return np.ones(X.shape[1])
+
+    rng = np.random.default_rng(0)
+    n_total = 50
+    X = rng.standard_normal((n_total, 4))
+    y = rng.integers(0, 2, n_total)
+    ranker = MRMRRanker(
+        relevance_func=relevance_func,
+        min_relevance_perc=None,
+        max_samples=20,
+        random_state=0,
+    )
+    ranker(X, y, [])
+    assert received[0] == 20
+
+
+def test_max_samples_float_limits_rows_seen_by_relevance_func():
+    received = []
+
+    def relevance_func(X, _):
+        received.append(X.shape[0])
+        return np.ones(X.shape[1])
+
+    rng = np.random.default_rng(0)
+    n_total = 100
+    X = rng.standard_normal((n_total, 3))
+    y = rng.integers(0, 2, n_total)
+    ranker = MRMRRanker(
+        relevance_func=relevance_func,
+        min_relevance_perc=None,
+        max_samples=0.4,
+        random_state=0,
+    )
+    ranker(X, y, [])
+    assert received[0] == 40
+
+
+def test_max_samples_none_uses_all_rows():
+    received = []
+
+    def relevance_func(X, _):
+        received.append(X.shape[0])
+        return np.ones(X.shape[1])
+
+    rng = np.random.default_rng(0)
+    n_total = 30
+    X = rng.standard_normal((n_total, 3))
+    y = rng.integers(0, 2, n_total)
+    ranker = MRMRRanker(
+        relevance_func=relevance_func,
+        min_relevance_perc=None,
+        max_samples=None,
+    )
+    ranker(X, y, [])
+    assert received[0] == n_total
+
+
+def test_max_samples_same_indices_reused_for_redundance():
+    """Redundance computations must use the same sampled rows as relevance."""
+    relevance_X = []
+    redundance_X = []
+
+    def relevance_func(X, _):
+        relevance_X.append(X.copy())
+        return np.ones(X.shape[1])
+
+    def redundance_func(X, _):
+        redundance_X.append(X.copy())
+        return np.zeros(X.shape[1])
+
+    rng = np.random.default_rng(0)
+    n_total = 60
+    X = rng.standard_normal((n_total, 4))
+    y = rng.integers(0, 2, n_total)
+    ranker = MRMRRanker(
+        relevance_func=relevance_func,
+        redundance_func=redundance_func,
+        min_relevance_perc=None,
+        max_samples=25,
+        random_state=1,
+    )
+    ranker(X, y, [])
+    ranker(X, y, [0])
+    assert len(redundance_X) == 1
+    assert X.shape[0] not in {relevance_X[0].shape[0], redundance_X[0].shape[0]}
+    np.testing.assert_array_equal(relevance_X[0], redundance_X[0])
+
+
+def test_max_samples_stratified_for_classification():
+    """Stratified sampling guarantees at least one sample per class."""
+    received_y = []
+
+    def relevance_func(X, y):
+        received_y.append(np.asarray(y).copy())
+        return np.ones(X.shape[1])
+
+    n_total = 100
+    # Severely imbalanced: 90 class-0, 10 class-1
+    y = np.array([0] * 90 + [1] * 10)
+    X = np.random.default_rng(0).standard_normal((n_total, 3))
+    ranker = MRMRRanker(
+        relevance_func=relevance_func,
+        min_relevance_perc=None,
+        max_samples=20,
+        random_state=0,
+        regression=False,
+    )
+    ranker(X, y, [])
+    sampled_y = received_y[0]
+    assert 0 in sampled_y
+    assert 1 in sampled_y  # guaranteed by max(1, ...) per class
+
+
+def test_max_samples_not_stratified_for_regression():
+    """Regression uses plain random sampling (no stratification)."""
+    received_n = []
+
+    def relevance_func(X, _):
+        received_n.append(X.shape[0])
+        return np.ones(X.shape[1])
+
+    rng = np.random.default_rng(0)
+    n_total = 80
+    X = rng.standard_normal((n_total, 3))
+    y = rng.standard_normal(n_total)
+    ranker = MRMRRanker(
+        relevance_func=relevance_func,
+        min_relevance_perc=None,
+        max_samples=30,
+        random_state=0,
+        regression=True,
+    )
+    ranker(X, y, [])
+    assert received_n[0] == 30
+
+
+def test_mrmrcv_max_samples_forwarded_to_ranker():
+    selector = MRMRCV(
+        LogisticRegression(),
+        max_samples=50,
+    )
+    assert selector.importance_getter.max_samples == 50
+    assert selector.max_samples == 50
