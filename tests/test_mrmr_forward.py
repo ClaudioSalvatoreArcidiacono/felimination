@@ -998,6 +998,191 @@ def test_mrmrcv_stores_params_on_self():
     assert selector.redundancy_aggregation == "mean"
 
 
+# ===========================================================================
+# MRMRRanker – imputation
+# ===========================================================================
+
+
+def test_discrete_imputer_fills_none_in_object_column():
+    received = []
+
+    def relevance_func(X, y):
+        received.append(X.copy())
+        return np.ones(X.shape[1])
+
+    X = pd.DataFrame(
+        {"num": [1.0, 2.0, 3.0, 4.0, 5.0], "cat": ["a", None, "b", "a", "b"]}
+    )
+    y = np.array([0, 1, 0, 1, 0])
+    ranker = MRMRRanker(relevance_func=relevance_func, min_relevance_perc=None)
+    ranker(X, y, [])
+    encoded = received[0]
+    # None was imputed with 'MISSING' and factorized to a non-negative code
+    assert not np.any(np.isnan(encoded))
+    assert np.all(encoded[:, 1] >= 0)
+
+
+def test_discrete_imputer_fills_nan_in_categorical_column():
+    received = []
+
+    def relevance_func(X, y):
+        received.append(X.copy())
+        return np.ones(X.shape[1])
+
+    X = pd.DataFrame(
+        {
+            "num": [1.0, 2.0, 3.0, 4.0, 5.0],
+            "cat": pd.Categorical(["a", None, "b", "a", "b"]),
+        }
+    )
+    y = np.array([0, 1, 0, 1, 0])
+    ranker = MRMRRanker(relevance_func=relevance_func, min_relevance_perc=None)
+    ranker(X, y, [])
+    encoded = received[0]
+    # NaN in Categorical is imputed with 'MISSING' → valid factorize code (>= 0)
+    assert not np.any(np.isnan(encoded))
+    assert np.all(encoded[:, 1] >= 0)
+
+
+def test_discrete_imputer_fills_nan_in_float_discrete_column():
+    received = []
+
+    def relevance_func(X, y):
+        received.append(X.copy())
+        return np.ones(X.shape[1])
+
+    # Float array with col 0 explicitly marked as discrete
+    X = np.array([[0.0, 1.0], [1.0, 2.0], [np.nan, 3.0], [1.0, 4.0], [0.0, 5.0]])
+    y = np.array([0, 1, 0, 1, 0])
+    ranker = MRMRRanker(
+        relevance_func=relevance_func,
+        discrete_features=np.array([True, False]),
+        min_relevance_perc=None,
+    )
+    ranker(X, y, [])
+    encoded = received[0]
+    assert not np.any(np.isnan(encoded))
+    # Row 2 col 0 was NaN → 'MISSING' → a valid factorize code (>= 0)
+    assert encoded[2, 0] >= 0
+
+
+def test_continuous_imputer_fills_nan_with_median():
+    received = []
+
+    def relevance_func(X, y):
+        received.append(X.copy())
+        return np.ones(X.shape[1])
+
+    # col 1: non-NaN values are [3, 5, 7, 9] → median = 6.0
+    X = np.array([[1.0, np.nan], [2.0, 3.0], [3.0, 5.0], [4.0, 7.0], [5.0, 9.0]])
+    y = np.array([0, 1, 0, 1, 0])
+    ranker = MRMRRanker(relevance_func=relevance_func, min_relevance_perc=None)
+    ranker(X, y, [])
+    encoded = received[0]
+    assert not np.any(np.isnan(encoded))
+    assert encoded[0, 1] == pytest.approx(6.0)
+
+
+def test_imputers_applied_on_subsequent_calls():
+    received_red = []
+
+    def relevance_func(X, y):
+        return np.ones(X.shape[1])
+
+    def redundance_func(X, y_feat):
+        received_red.append(X.copy())
+        return np.ones(X.shape[1])
+
+    X = np.array([[1.0, np.nan], [2.0, 3.0], [3.0, 5.0], [4.0, 7.0], [5.0, 9.0]])
+    y = np.array([0, 1, 0, 1, 0])
+    ranker = MRMRRanker(
+        relevance_func=relevance_func,
+        redundance_func=redundance_func,
+        min_relevance_perc=None,
+    )
+    ranker(X, y, [])
+    ranker(X, y, [0])
+    assert not np.any(np.isnan(received_red[0]))
+
+
+def test_custom_discrete_imputer_is_used():
+    from sklearn.impute import SimpleImputer as SI
+
+    received = []
+
+    def relevance_func(X, y):
+        received.append(X.copy())
+        return np.ones(X.shape[1])
+
+    X = pd.DataFrame(
+        {"num": [1.0, 2.0, 3.0, 4.0, 5.0], "cat": ["a", None, "b", "a", "b"]}
+    )
+    y = np.array([0, 1, 0, 1, 0])
+    ranker = MRMRRanker(
+        relevance_func=relevance_func,
+        discrete_imputer=SI(strategy="constant", fill_value="UNKNOWN"),
+        min_relevance_perc=None,
+    )
+    ranker(X, y, [])
+    # 'UNKNOWN' imputed value gets a factorize code ≥ 0
+    assert np.all(received[0][:, 1] >= 0)
+
+
+def test_custom_continuous_imputer_is_used():
+    from sklearn.impute import SimpleImputer as SI
+
+    received = []
+
+    def relevance_func(X, y):
+        received.append(X.copy())
+        return np.ones(X.shape[1])
+
+    # col 1 non-NaN: [1, 1, 1, 10] → mean=3.25, median=1.0
+    X = np.array([[1.0, np.nan], [2.0, 1.0], [3.0, 1.0], [4.0, 1.0], [5.0, 10.0]])
+    y = np.array([0, 1, 0, 1, 0])
+    ranker = MRMRRanker(
+        relevance_func=relevance_func,
+        continuous_imputer=SI(strategy="mean"),
+        min_relevance_perc=None,
+    )
+    ranker(X, y, [])
+    assert received[0][0, 1] == pytest.approx(3.25)
+
+
+# ===========================================================================
+# MRMRCV – imputation parameter forwarding
+# ===========================================================================
+
+
+def test_mrmrcv_imputer_params_forwarded_to_ranker():
+    from sklearn.impute import SimpleImputer as SI
+
+    disc_imp = SI(strategy="constant", fill_value="N/A")
+    cont_imp = SI(strategy="mean")
+    selector = MRMRCV(
+        LogisticRegression(),
+        discrete_imputer=disc_imp,
+        continuous_imputer=cont_imp,
+    )
+    ranker = selector.importance_getter
+    assert ranker.discrete_imputer is disc_imp
+    assert ranker.continuous_imputer is cont_imp
+
+
+def test_mrmrcv_imputer_params_stored_on_self():
+    from sklearn.impute import SimpleImputer as SI
+
+    disc_imp = SI(strategy="constant", fill_value="N/A")
+    cont_imp = SI(strategy="mean")
+    selector = MRMRCV(
+        LogisticRegression(),
+        discrete_imputer=disc_imp,
+        continuous_imputer=cont_imp,
+    )
+    assert selector.discrete_imputer is disc_imp
+    assert selector.continuous_imputer is cont_imp
+
+
 def test_mrmrcv_auto_discrete_mask_from_dataframe_object_columns():
     # Numeric features + one object-dtype categorical column (integer-coded).
     # After fit, the ranker's _discrete_mask must mark only the object column.

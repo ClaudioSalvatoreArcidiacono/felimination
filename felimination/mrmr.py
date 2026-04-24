@@ -11,8 +11,9 @@ This module contains:
 
 import numpy as np
 import pandas as pd
-from sklearn.base import is_classifier
+from sklearn.base import clone, is_classifier
 from sklearn.feature_selection import mutual_info_classif, mutual_info_regression
+from sklearn.impute import SimpleImputer
 
 from felimination.forward import ForwardSelectorCV
 
@@ -158,6 +159,21 @@ class MRMRRanker:
         ``-inf`` and will not be selected in that round. The aggregation
         is controlled by ``redundancy_aggregation``. Only applied when at
         least one feature has already been selected.
+    discrete_imputer : sklearn-compatible transformer or None, default=None
+        Imputer applied to discrete (categorical) feature columns before
+        encoding. When ``None``, defaults to
+        ``SimpleImputer(strategy='constant', fill_value='MISSING')``,
+        replacing missing values with the string ``'MISSING'`` (treated
+        as an additional category). Pass any sklearn-compatible transformer
+        with ``fit``/``transform``. Ignored when there are no discrete
+        columns.
+    continuous_imputer : sklearn-compatible transformer or None, default=None
+        Imputer applied to continuous (numeric) feature columns before the
+        mutual information computation. When ``None``, defaults to
+        ``SimpleImputer(strategy='median')``. Pass any sklearn-compatible
+        transformer with ``fit``/``transform``. Ignored when there are no
+        continuous columns. For arrays with non-object ``dtype``, applied
+        to all columns regardless of ``discrete_features``.
 
     Attributes
     ----------
@@ -178,6 +194,8 @@ class MRMRRanker:
         redundancy_aggregation="max",
         min_relevance_perc=0.01,
         max_redundancy=None,
+        discrete_imputer=None,
+        continuous_imputer=None,
     ):
         if scheme not in ("ratio", "difference"):
             raise ValueError(f"scheme must be 'ratio' or 'difference', got {scheme!r}")
@@ -200,6 +218,8 @@ class MRMRRanker:
         self.redundancy_aggregation = redundancy_aggregation
         self.min_relevance_perc = min_relevance_perc
         self.max_redundancy = max_redundancy
+        self.discrete_imputer = discrete_imputer
+        self.continuous_imputer = continuous_imputer
         self._reset()
 
     def _reset(self):
@@ -209,6 +229,8 @@ class MRMRRanker:
         self._seen = set()
         self._discrete_mask = None
         self._low_relevance_mask = None
+        self._fitted_discrete_imputer = None
+        self._fitted_continuous_imputer = None
 
     def _resolve_discrete_mask(self, X):
         n = X.shape[1]
@@ -241,6 +263,62 @@ class MRMRRanker:
         mask = np.zeros(n, dtype=bool)
         mask[arr] = True
         return mask
+
+    def _fit_imputers(self, X_arr):
+        self._fitted_discrete_imputer = None
+        self._fitted_continuous_imputer = None
+        disc_cols = np.where(self._discrete_mask)[0]
+        cont_cols = np.where(~self._discrete_mask)[0]
+        if len(disc_cols) > 0:
+            imp = self.discrete_imputer
+            if imp is None:
+                imp = SimpleImputer(strategy="constant", fill_value="MISSING")
+            # astype(object) keeps NaN detectable while handling numeric discrete cols
+            self._fitted_discrete_imputer = clone(imp).fit(
+                X_arr[:, disc_cols].astype(object)
+            )
+        if len(cont_cols) > 0:
+            imp = self.continuous_imputer
+            if imp is None:
+                imp = SimpleImputer(strategy="median")
+            self._fitted_continuous_imputer = clone(imp).fit(
+                self._to_float_array(X_arr[:, cont_cols])
+            )
+
+    def _to_float_array(self, arr):
+        if arr.dtype != object:
+            return arr.astype(float)
+        n_rows, n_cols = arr.shape
+        result = np.empty((n_rows, n_cols), dtype=float)
+        for j in range(n_cols):
+            result[:, j] = pd.to_numeric(arr[:, j], errors="coerce")
+        return result
+
+    def _impute_X(self, X_arr):
+        disc_cols = np.where(self._discrete_mask)[0]
+        cont_cols = np.where(~self._discrete_mask)[0]
+        has_disc = len(disc_cols) > 0 and self._fitted_discrete_imputer is not None
+        has_cont = len(cont_cols) > 0 and self._fitted_continuous_imputer is not None
+        if not has_disc and not has_cont:
+            return X_arr
+        # When discrete columns are present in a float array, promote to object so
+        # the string fill value ('MISSING') can coexist with float continuous columns.
+        result = (
+            X_arr.astype(object) if X_arr.dtype != object and has_disc else X_arr.copy()
+        )
+        if has_disc:
+            result[:, disc_cols] = self._fitted_discrete_imputer.transform(
+                result[:, disc_cols].astype(object)
+            )
+        if has_cont:
+            imputed = self._fitted_continuous_imputer.transform(
+                self._to_float_array(result[:, cont_cols])
+            )
+            result[:, cont_cols] = imputed
+        if not has_disc and X_arr.dtype != object:
+            # Pure float array with only continuous imputation — keep float dtype
+            return result.astype(float)
+        return result
 
     def _default_relevance(self, X_arr, y):
         mi_func = mutual_info_regression if self.regression else mutual_info_classif
@@ -332,6 +410,8 @@ class MRMRRanker:
         if not selected_idx:
             self._reset()
             self._discrete_mask = self._resolve_discrete_mask(X)
+            self._fit_imputers(X_arr)
+            X_arr = self._impute_X(X_arr)
             X_arr = self._encode_X(X_arr)
             self.relevance_ = self._compute_relevance(X_arr, y)
             self._redundance_sum = np.zeros(n_features, dtype=float)
@@ -348,6 +428,7 @@ class MRMRRanker:
                 scores[self._low_relevance_mask] = -np.inf
             return scores
 
+        X_arr = self._impute_X(X_arr)
         X_arr = self._encode_X(X_arr)
         candidate_mask = (
             ~self._low_relevance_mask if self._low_relevance_mask is not None else None
@@ -506,6 +587,13 @@ class MRMRCV(ForwardSelectorCV):
         ``-inf`` and will not be selected in that round. The aggregation
         is controlled by ``redundancy_aggregation``. Only applied when at
         least one feature has already been selected.
+    discrete_imputer : sklearn-compatible transformer or None, default=None
+        Forwarded to :class:`MRMRRanker`. Imputer for discrete (categorical)
+        columns. When ``None``, defaults to
+        ``SimpleImputer(strategy='constant', fill_value='MISSING')``.
+    continuous_imputer : sklearn-compatible transformer or None, default=None
+        Forwarded to :class:`MRMRRanker`. Imputer for continuous (numeric)
+        columns. When ``None``, defaults to ``SimpleImputer(strategy='median')``.
     callbacks : list of callable, default=None
         List of callables called at the end of each evaluated step. Each
         callable receives ``(selector, scores)`` where ``scores`` is the
@@ -554,6 +642,8 @@ class MRMRCV(ForwardSelectorCV):
         redundancy_aggregation="max",
         min_relevance_perc=0.01,
         max_redundancy=None,
+        discrete_imputer=None,
+        continuous_imputer=None,
         callbacks=None,
         best_iteration_selection_criteria="mean_test_score",
     ) -> None:
@@ -565,6 +655,8 @@ class MRMRCV(ForwardSelectorCV):
         self.redundancy_aggregation = redundancy_aggregation
         self.min_relevance_perc = min_relevance_perc
         self.max_redundancy = max_redundancy
+        self.discrete_imputer = discrete_imputer
+        self.continuous_imputer = continuous_imputer
         super().__init__(
             estimator,
             step=step,
@@ -587,6 +679,8 @@ class MRMRCV(ForwardSelectorCV):
                 redundancy_aggregation=redundancy_aggregation,
                 min_relevance_perc=min_relevance_perc,
                 max_redundancy=max_redundancy,
+                discrete_imputer=discrete_imputer,
+                continuous_imputer=continuous_imputer,
             ),
             callbacks=callbacks,
             best_iteration_selection_criteria=best_iteration_selection_criteria,
