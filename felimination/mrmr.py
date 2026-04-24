@@ -271,6 +271,20 @@ class MRMRRanker:
             dtype=float,
         )
 
+    def _encode_X(self, X_arr):
+        """Return a float copy of X_arr with object columns label-encoded."""
+        if X_arr.dtype != object:
+            return X_arr.astype(float)
+        result = np.empty(X_arr.shape, dtype=float)
+        for j in range(X_arr.shape[1]):
+            col = X_arr[:, j]
+            if self._discrete_mask[j]:
+                codes, _ = pd.factorize(col)
+                result[:, j] = codes.astype(int)
+            else:
+                result[:, j] = col.astype(float)
+        return result
+
     def _combine(self, relevance, redundance):
         if self.scheme == "difference":
             return relevance - redundance
@@ -293,6 +307,7 @@ class MRMRRanker:
         if not selected_idx:
             self._reset()
             self._discrete_mask = self._resolve_discrete_mask(X)
+            X_arr = self._encode_X(X_arr)
             self.relevance_ = self._compute_relevance(X_arr, y)
             self._redundance_sum = np.zeros(n_features, dtype=float)
             self._redundance_max = np.full(n_features, -np.inf, dtype=float)
@@ -302,6 +317,7 @@ class MRMRRanker:
                 scores[self.relevance_ < self.min_relevance] = -np.inf
             return scores
 
+        X_arr = self._encode_X(X_arr)
         for i in selected_idx:
             if i not in self._seen:
                 red = self._compute_redundance(X_arr, i)

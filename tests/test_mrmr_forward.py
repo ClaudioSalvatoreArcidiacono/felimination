@@ -140,6 +140,35 @@ def test_discrete_mask_auto_dataframe_object_is_discrete():
     assert mask.tolist() == [False, True]
 
 
+def test_discrete_mask_auto_dataframe_multiple_object_columns_are_discrete():
+    ranker = _make_ranker()
+    X = pd.DataFrame(
+        {
+            "num": [1.0, 2.0, 3.0],
+            "obj1": ["a", "b", "c"],
+            "obj2": ["x", "y", "z"],
+        }
+    )
+    assert ranker._resolve_discrete_mask(X).tolist() == [False, True, True]
+
+
+def test_discrete_mask_auto_dataframe_object_with_nan_is_discrete():
+    ranker = _make_ranker()
+    X = pd.DataFrame({"num": [1.0, 2.0, 3.0], "obj": ["a", None, "c"]})
+    assert ranker._resolve_discrete_mask(X).tolist() == [False, True]
+
+
+def test_discrete_mask_auto_dataframe_integers_as_object_are_discrete():
+    ranker = _make_ranker()
+    X = pd.DataFrame(
+        {
+            "num": [1.0, 2.0, 3.0],
+            "obj": pd.array([1, 2, 3], dtype=object),
+        }
+    )
+    assert ranker._resolve_discrete_mask(X).tolist() == [False, True]
+
+
 def test_discrete_mask_auto_dataframe_categorical_is_discrete():
     ranker = _make_ranker()
     X = pd.DataFrame({"num": [1.0, 2.0, 3.0], "cat": pd.Categorical(["a", "b", "a"])})
@@ -961,3 +990,29 @@ def test_mrmrcv_stores_params_on_self():
     assert selector.max_redundancy == 0.9
     assert selector.discrete_features is True
     assert selector.redundancy_aggregation == "mean"
+
+
+def test_mrmrcv_auto_discrete_mask_from_dataframe_object_columns():
+    # Numeric features + one object-dtype categorical column (integer-coded).
+    # After fit, the ranker's _discrete_mask must mark only the object column.
+    rng = np.random.default_rng(0)
+    n = 100
+    X = pd.DataFrame(
+        {
+            "num1": rng.standard_normal(n),
+            "num2": rng.standard_normal(n),
+            "cat": pd.array(
+                np.choose(rng.integers(0, 3, n), ["low", "med", "high"]), dtype=object
+            ),
+        }
+    )
+    y = rng.integers(0, 2, n)
+    selector = MRMRCV(
+        LogisticRegression(random_state=0),
+        min_features_to_select=1,
+        max_features_to_select=2,
+        cv=2,
+        random_state=0,
+        min_relevance=None,
+    ).fit(X, y)
+    assert selector.importance_getter._discrete_mask.tolist() == [False, False, True]
