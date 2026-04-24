@@ -14,6 +14,7 @@ import pandas as pd
 from sklearn.base import clone, is_classifier
 from sklearn.feature_selection import mutual_info_classif, mutual_info_regression
 from sklearn.impute import SimpleImputer
+from sklearn.utils import check_random_state
 
 from felimination.forward import ForwardSelectorCV
 
@@ -174,6 +175,20 @@ class MRMRRanker:
         transformer with ``fit``/``transform``. Ignored when there are no
         continuous columns. For arrays with non-object ``dtype``, applied
         to all columns regardless of ``discrete_features``.
+    max_samples : int, float or None, default=None
+        Number of samples used when computing mutual information scores.
+        Imputers are still fitted on the full training set; only the MI
+        scoring (relevance on the first call and redundance on subsequent
+        calls) uses the subsample.
+
+        - ``None``: use all samples (no subsampling).
+        - ``int``: use exactly this many samples (capped at ``n_samples``).
+        - ``float`` in ``(0.0, 1.0]``: use this fraction of the training
+          set (at least 1 sample).
+
+        The same row indices are drawn once per forward-selection run
+        (controlled by ``random_state``) and reused for every subsequent
+        redundance computation, keeping relevance and redundance comparable.
 
     Attributes
     ----------
@@ -196,6 +211,7 @@ class MRMRRanker:
         max_redundancy=None,
         discrete_imputer=None,
         continuous_imputer=None,
+        max_samples=None,
     ):
         if scheme not in ("ratio", "difference"):
             raise ValueError(f"scheme must be 'ratio' or 'difference', got {scheme!r}")
@@ -220,6 +236,7 @@ class MRMRRanker:
         self.max_redundancy = max_redundancy
         self.discrete_imputer = discrete_imputer
         self.continuous_imputer = continuous_imputer
+        self.max_samples = max_samples
         self._reset()
 
     def _reset(self):
@@ -231,6 +248,7 @@ class MRMRRanker:
         self._low_relevance_mask = None
         self._fitted_discrete_imputer = None
         self._fitted_continuous_imputer = None
+        self._sampled_indices = None
 
     def _resolve_discrete_mask(self, X):
         n = X.shape[1]
@@ -263,6 +281,16 @@ class MRMRRanker:
         mask = np.zeros(n, dtype=bool)
         mask[arr] = True
         return mask
+
+    def _draw_sample_indices(self, n_rows):
+        if self.max_samples is None:
+            return None
+        if isinstance(self.max_samples, float):
+            n = max(1, int(n_rows * self.max_samples))
+        else:
+            n = min(int(self.max_samples), n_rows)
+        rng = check_random_state(self.random_state)
+        return rng.choice(n_rows, size=n, replace=False)
 
     def _fit_imputers(self, X_arr):
         self._fitted_discrete_imputer = None
@@ -413,7 +441,13 @@ class MRMRRanker:
             self._fit_imputers(X_arr)
             X_arr = self._impute_X(X_arr)
             X_arr = self._encode_X(X_arr)
-            self.relevance_ = self._compute_relevance(X_arr, y)
+            self._sampled_indices = self._draw_sample_indices(X_arr.shape[0])
+            if self._sampled_indices is not None:
+                X_sample = X_arr[self._sampled_indices]
+                y_sample = np.asarray(y)[self._sampled_indices]
+            else:
+                X_sample, y_sample = X_arr, y
+            self.relevance_ = self._compute_relevance(X_sample, y_sample)
             self._redundance_sum = np.zeros(n_features, dtype=float)
             self._redundance_max = np.full(n_features, -np.inf, dtype=float)
             self._redundance_rows = []
@@ -430,6 +464,8 @@ class MRMRRanker:
 
         X_arr = self._impute_X(X_arr)
         X_arr = self._encode_X(X_arr)
+        if self._sampled_indices is not None:
+            X_arr = X_arr[self._sampled_indices]
         candidate_mask = (
             ~self._low_relevance_mask if self._low_relevance_mask is not None else None
         )
@@ -594,6 +630,10 @@ class MRMRCV(ForwardSelectorCV):
     continuous_imputer : sklearn-compatible transformer or None, default=None
         Forwarded to :class:`MRMRRanker`. Imputer for continuous (numeric)
         columns. When ``None``, defaults to ``SimpleImputer(strategy='median')``.
+    max_samples : int, float or None, default=None
+        Forwarded to :class:`MRMRRanker`. Number of samples used when
+        computing mutual information scores. ``None`` means all samples.
+        See :class:`MRMRRanker` for the full description.
     callbacks : list of callable, default=None
         List of callables called at the end of each evaluated step. Each
         callable receives ``(selector, scores)`` where ``scores`` is the
@@ -644,6 +684,7 @@ class MRMRCV(ForwardSelectorCV):
         max_redundancy=None,
         discrete_imputer=None,
         continuous_imputer=None,
+        max_samples=None,
         callbacks=None,
         best_iteration_selection_criteria="mean_test_score",
     ) -> None:
@@ -657,6 +698,7 @@ class MRMRCV(ForwardSelectorCV):
         self.max_redundancy = max_redundancy
         self.discrete_imputer = discrete_imputer
         self.continuous_imputer = continuous_imputer
+        self.max_samples = max_samples
         super().__init__(
             estimator,
             step=step,
@@ -681,6 +723,7 @@ class MRMRCV(ForwardSelectorCV):
                 max_redundancy=max_redundancy,
                 discrete_imputer=discrete_imputer,
                 continuous_imputer=continuous_imputer,
+                max_samples=max_samples,
             ),
             callbacks=callbacks,
             best_iteration_selection_criteria=best_iteration_selection_criteria,

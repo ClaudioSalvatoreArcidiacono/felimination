@@ -1207,3 +1207,103 @@ def test_mrmrcv_auto_discrete_mask_from_dataframe_object_columns():
         min_relevance_perc=None,
     ).fit(X, y)
     assert selector.importance_getter._discrete_mask.tolist() == [False, False, True]
+
+
+# ===========================================================================
+# max_samples – subsampling for MI scoring
+# ===========================================================================
+
+
+def test_max_samples_int_limits_rows_seen_by_relevance_func():
+    received = []
+
+    def relevance_func(X, _):
+        received.append(X.shape[0])
+        return np.ones(X.shape[1])
+
+    rng = np.random.default_rng(0)
+    n_total = 50
+    X = rng.standard_normal((n_total, 4))
+    y = rng.integers(0, 2, n_total)
+    ranker = MRMRRanker(
+        relevance_func=relevance_func,
+        min_relevance_perc=None,
+        max_samples=20,
+        random_state=0,
+    )
+    ranker(X, y, [])
+    assert received[0] == 20
+
+
+def test_max_samples_float_limits_rows_seen_by_relevance_func():
+    received = []
+
+    def relevance_func(X, _):
+        received.append(X.shape[0])
+        return np.ones(X.shape[1])
+
+    rng = np.random.default_rng(0)
+    n_total = 100
+    X = rng.standard_normal((n_total, 3))
+    y = rng.integers(0, 2, n_total)
+    ranker = MRMRRanker(
+        relevance_func=relevance_func,
+        min_relevance_perc=None,
+        max_samples=0.4,
+        random_state=0,
+    )
+    ranker(X, y, [])
+    assert received[0] == 40
+
+
+def test_max_samples_none_uses_all_rows():
+    received = []
+
+    def relevance_func(X, _):
+        received.append(X.shape[0])
+        return np.ones(X.shape[1])
+
+    rng = np.random.default_rng(0)
+    n_total = 30
+    X = rng.standard_normal((n_total, 3))
+    y = rng.integers(0, 2, n_total)
+    ranker = MRMRRanker(
+        relevance_func=relevance_func,
+        min_relevance_perc=None,
+        max_samples=None,
+    )
+    ranker(X, y, [])
+    assert received[0] == n_total
+
+
+def test_max_samples_same_indices_reused_for_redundance():
+    """Redundance computations must use the same sampled rows as relevance."""
+    redundance_row_counts = []
+
+    def redundance_func(X, _):
+        redundance_row_counts.append(X.shape[0])
+        return np.zeros(X.shape[1])
+
+    rng = np.random.default_rng(0)
+    n_total = 60
+    X = rng.standard_normal((n_total, 4))
+    y = rng.integers(0, 2, n_total)
+    ranker = MRMRRanker(
+        redundance_func=redundance_func,
+        min_relevance_perc=None,
+        max_samples=25,
+        random_state=1,
+    )
+    ranker(X, y, [])
+    ranker(X, y, [0])
+    assert len(redundance_row_counts) == 1
+    assert redundance_row_counts[0] == 25
+
+
+def test_mrmrcv_max_samples_forwarded_to_ranker():
+    selector = MRMRCV(
+        LogisticRegression(),
+        max_samples=50,
+    )
+    assert selector.importance_getter.max_samples == 50
+    assert selector.max_samples == 50
