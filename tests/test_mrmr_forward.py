@@ -1278,10 +1278,15 @@ def test_max_samples_none_uses_all_rows():
 
 def test_max_samples_same_indices_reused_for_redundance():
     """Redundance computations must use the same sampled rows as relevance."""
-    redundance_row_counts = []
+    relevance_X = []
+    redundance_X = []
+
+    def relevance_func(X, _):
+        relevance_X.append(X.copy())
+        return np.ones(X.shape[1])
 
     def redundance_func(X, _):
-        redundance_row_counts.append(X.shape[0])
+        redundance_X.append(X.copy())
         return np.zeros(X.shape[1])
 
     rng = np.random.default_rng(0)
@@ -1289,6 +1294,7 @@ def test_max_samples_same_indices_reused_for_redundance():
     X = rng.standard_normal((n_total, 4))
     y = rng.integers(0, 2, n_total)
     ranker = MRMRRanker(
+        relevance_func=relevance_func,
         redundance_func=redundance_func,
         min_relevance_perc=None,
         max_samples=25,
@@ -1296,8 +1302,57 @@ def test_max_samples_same_indices_reused_for_redundance():
     )
     ranker(X, y, [])
     ranker(X, y, [0])
-    assert len(redundance_row_counts) == 1
-    assert redundance_row_counts[0] == 25
+    assert len(redundance_X) == 1
+    assert X.shape[0] not in {relevance_X[0].shape[0], redundance_X[0].shape[0]}
+    np.testing.assert_array_equal(relevance_X[0], redundance_X[0])
+
+
+def test_max_samples_stratified_for_classification():
+    """Stratified sampling guarantees at least one sample per class."""
+    received_y = []
+
+    def relevance_func(X, y):
+        received_y.append(np.asarray(y).copy())
+        return np.ones(X.shape[1])
+
+    n_total = 100
+    # Severely imbalanced: 90 class-0, 10 class-1
+    y = np.array([0] * 90 + [1] * 10)
+    X = np.random.default_rng(0).standard_normal((n_total, 3))
+    ranker = MRMRRanker(
+        relevance_func=relevance_func,
+        min_relevance_perc=None,
+        max_samples=20,
+        random_state=0,
+        regression=False,
+    )
+    ranker(X, y, [])
+    sampled_y = received_y[0]
+    assert 0 in sampled_y
+    assert 1 in sampled_y  # guaranteed by max(1, ...) per class
+
+
+def test_max_samples_not_stratified_for_regression():
+    """Regression uses plain random sampling (no stratification)."""
+    received_n = []
+
+    def relevance_func(X, _):
+        received_n.append(X.shape[0])
+        return np.ones(X.shape[1])
+
+    rng = np.random.default_rng(0)
+    n_total = 80
+    X = rng.standard_normal((n_total, 3))
+    y = rng.standard_normal(n_total)
+    ranker = MRMRRanker(
+        relevance_func=relevance_func,
+        min_relevance_perc=None,
+        max_samples=30,
+        random_state=0,
+        regression=True,
+    )
+    ranker(X, y, [])
+    assert received_n[0] == 30
 
 
 def test_mrmrcv_max_samples_forwarded_to_ranker():

@@ -14,7 +14,7 @@ import pandas as pd
 from sklearn.base import clone, is_classifier
 from sklearn.feature_selection import mutual_info_classif, mutual_info_regression
 from sklearn.impute import SimpleImputer
-from sklearn.utils import check_random_state
+from sklearn.model_selection import train_test_split
 
 from felimination.forward import ForwardSelectorCV
 
@@ -282,15 +282,23 @@ class MRMRRanker:
         mask[arr] = True
         return mask
 
-    def _draw_sample_indices(self, n_rows):
+    def _draw_sample_indices(self, n_rows, y=None):
         if self.max_samples is None:
             return None
         if isinstance(self.max_samples, float):
             n = max(1, int(n_rows * self.max_samples))
         else:
             n = min(int(self.max_samples), n_rows)
-        rng = check_random_state(self.random_state)
-        return rng.choice(n_rows, size=n, replace=False)
+        if n >= n_rows:
+            return None
+        stratify = np.asarray(y) if not self.regression and y is not None else None
+        sampled, _ = train_test_split(
+            np.arange(n_rows),
+            train_size=n,
+            stratify=stratify,
+            random_state=self.random_state,
+        )
+        return sampled
 
     def _fit_imputers(self, X_arr):
         self._fitted_discrete_imputer = None
@@ -441,7 +449,7 @@ class MRMRRanker:
             self._fit_imputers(X_arr)
             X_arr = self._impute_X(X_arr)
             X_arr = self._encode_X(X_arr)
-            self._sampled_indices = self._draw_sample_indices(X_arr.shape[0])
+            self._sampled_indices = self._draw_sample_indices(X_arr.shape[0], y)
             if self._sampled_indices is not None:
                 X_sample = X_arr[self._sampled_indices]
                 y_sample = np.asarray(y)[self._sampled_indices]
