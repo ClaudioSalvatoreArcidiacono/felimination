@@ -142,10 +142,16 @@ class MRMRRanker:
         >    because it more aggressively avoids adding features that
         >    duplicate information already captured, which tends to work
         >    better in practice for forward selection with CV scoring.
-    min_relevance : float or None, default=0.05
-        If set, features whose relevance score is strictly below this
-        threshold are assigned ``-inf`` and will never be selected.
-        Applied at every call, including the first (no selected features).
+    min_relevance_perc : float or None, default=0.01
+        If set, features are filtered based on cumulative relevance. After
+        computing relevance scores, a minimum relevance threshold is derived
+        as ``min_relevance_perc * sum(relevance scores)``. Features are then
+        ordered by relevance ascending and their cumulative relevance is
+        computed; any feature whose cumulative relevance (from the least
+        relevant up to and including itself) is strictly below the threshold
+        is assigned ``-inf`` and will never be selected. This removes the
+        low-relevance tail that together contributes less than
+        ``min_relevance_perc`` of the total relevance.
     max_redundancy : float or None, default=None
         If set, features whose aggregated redundancy with the
         already-selected features exceeds this threshold are assigned
@@ -170,7 +176,7 @@ class MRMRRanker:
         relevance_func=None,
         redundance_func=None,
         redundancy_aggregation="max",
-        min_relevance=0.05,
+        min_relevance_perc=0.01,
         max_redundancy=None,
     ):
         if scheme not in ("ratio", "difference"):
@@ -192,7 +198,7 @@ class MRMRRanker:
         self.relevance_func = relevance_func
         self.redundance_func = redundance_func
         self.redundancy_aggregation = redundancy_aggregation
-        self.min_relevance = min_relevance
+        self.min_relevance_perc = min_relevance_perc
         self.max_redundancy = max_redundancy
         self._reset()
 
@@ -202,6 +208,7 @@ class MRMRRanker:
         self._redundance_max = None
         self._seen = set()
         self._discrete_mask = None
+        self._low_relevance_mask = None
 
     def _resolve_discrete_mask(self, X):
         n = X.shape[1]
@@ -246,12 +253,16 @@ class MRMRRanker:
             n_jobs=self.n_jobs,
         )
 
-    def _default_redundance(self, X_arr, y_feature, target_is_discrete):
+    def _default_redundance(
+        self, X_arr, y_feature, target_is_discrete, discrete_mask=None
+    ):
         mi_func = mutual_info_classif if target_is_discrete else mutual_info_regression
+        if discrete_mask is None:
+            discrete_mask = self._discrete_mask
         return mi_func(
             X_arr,
             y_feature,
-            discrete_features=self._discrete_mask,
+            discrete_features=discrete_mask,
             n_neighbors=self.n_neighbors,
             random_state=self.random_state,
             n_jobs=self.n_jobs,
@@ -262,10 +273,24 @@ class MRMRRanker:
             return np.asarray(self.relevance_func(X_arr, y), dtype=float)
         return np.asarray(self._default_relevance(X_arr, y), dtype=float)
 
-    def _compute_redundance(self, X_arr, idx):
+    def _compute_redundance(self, X_arr, idx, candidate_mask=None):
+        n_features = X_arr.shape[1]
         y_feature = X_arr[:, idx]
         if self.redundance_func is not None:
             return np.asarray(self.redundance_func(X_arr, y_feature), dtype=float)
+        if candidate_mask is not None:
+            red_sub = np.asarray(
+                self._default_redundance(
+                    X_arr[:, candidate_mask],
+                    y_feature,
+                    self._discrete_mask[idx],
+                    self._discrete_mask[candidate_mask],
+                ),
+                dtype=float,
+            )
+            red = np.zeros(n_features, dtype=float)
+            red[candidate_mask] = red_sub
+            return red
         return np.asarray(
             self._default_redundance(X_arr, y_feature, self._discrete_mask[idx]),
             dtype=float,
@@ -313,14 +338,23 @@ class MRMRRanker:
             self._redundance_max = np.full(n_features, -np.inf, dtype=float)
             self._redundance_rows = []
             scores = self.relevance_.copy()
-            if self.min_relevance is not None:
-                scores[self.relevance_ < self.min_relevance] = -np.inf
+            if self.min_relevance_perc is not None:
+                total = self.relevance_.sum()
+                min_rel = self.min_relevance_perc * total
+                sorted_idx = np.argsort(self.relevance_)
+                cumsum = np.cumsum(self.relevance_[sorted_idx])
+                self._low_relevance_mask = np.zeros(n_features, dtype=bool)
+                self._low_relevance_mask[sorted_idx[cumsum < min_rel]] = True
+                scores[self._low_relevance_mask] = -np.inf
             return scores
 
         X_arr = self._encode_X(X_arr)
+        candidate_mask = (
+            ~self._low_relevance_mask if self._low_relevance_mask is not None else None
+        )
         for i in selected_idx:
             if i not in self._seen:
-                red = self._compute_redundance(X_arr, i)
+                red = self._compute_redundance(X_arr, i, candidate_mask)
                 self._redundance_sum += red
                 self._redundance_max = np.maximum(self._redundance_max, red)
                 self._redundance_rows.append(red)
@@ -328,8 +362,8 @@ class MRMRRanker:
 
         agg_red = self._aggregate_redundance()
         scores = self._combine(self.relevance_, agg_red)
-        if self.min_relevance is not None:
-            scores[self.relevance_ < self.min_relevance] = -np.inf
+        if self._low_relevance_mask is not None:
+            scores[self._low_relevance_mask] = -np.inf
         if self.max_redundancy is not None:
             scores[agg_red > self.max_redundancy] = -np.inf
         return scores
@@ -456,10 +490,16 @@ class MRMRCV(ForwardSelectorCV):
         >    because it more aggressively avoids adding features that
         >    duplicate information already captured, which tends to work
         >    better in practice for forward selection with CV scoring.
-    min_relevance : float or None, default=0.05
-        If set, features whose relevance score is strictly below this
-        threshold are assigned ``-inf`` and will never be selected.
-        Applied at every step, including the first (no selected features).
+    min_relevance_perc : float or None, default=0.01
+        If set, features are filtered based on cumulative relevance. After
+        computing relevance scores, a minimum relevance threshold is derived
+        as ``min_relevance_perc * sum(relevance scores)``. Features are then
+        ordered by relevance ascending and their cumulative relevance is
+        computed; any feature whose cumulative relevance (from the least
+        relevant up to and including itself) is strictly below the threshold
+        is assigned ``-inf`` and will never be selected. This removes the
+        low-relevance tail that together contributes less than
+        ``min_relevance_perc`` of the total relevance.
     max_redundancy : float or None, default=None
         If set, features whose aggregated redundancy with the
         already-selected features exceeds this threshold are assigned
@@ -512,7 +552,7 @@ class MRMRCV(ForwardSelectorCV):
         relevance_func=None,
         redundance_func=None,
         redundancy_aggregation="max",
-        min_relevance=0.05,
+        min_relevance_perc=0.01,
         max_redundancy=None,
         callbacks=None,
         best_iteration_selection_criteria="mean_test_score",
@@ -523,7 +563,7 @@ class MRMRCV(ForwardSelectorCV):
         self.relevance_func = relevance_func
         self.redundance_func = redundance_func
         self.redundancy_aggregation = redundancy_aggregation
-        self.min_relevance = min_relevance
+        self.min_relevance_perc = min_relevance_perc
         self.max_redundancy = max_redundancy
         super().__init__(
             estimator,
@@ -545,7 +585,7 @@ class MRMRCV(ForwardSelectorCV):
                 relevance_func=relevance_func,
                 redundance_func=redundance_func,
                 redundancy_aggregation=redundancy_aggregation,
-                min_relevance=min_relevance,
+                min_relevance_perc=min_relevance_perc,
                 max_redundancy=max_redundancy,
             ),
             callbacks=callbacks,

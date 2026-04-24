@@ -323,7 +323,7 @@ def test_scheme_ratio_combines_correctly(tiny_X, tiny_y):
         scheme="ratio",
         relevance_func=_const_rel(relevances),
         redundance_func=_const_red(redundances),
-        min_relevance=None,
+        min_relevance_perc=None,
         max_redundancy=None,
     )
     ranker(tiny_X, tiny_y, [])
@@ -348,7 +348,7 @@ def test_redundancy_aggregation_constant_redundance(tiny_X, tiny_y):
         scheme="difference",
         relevance_func=_const_rel([1.0, 1.0, 1.0]),
         redundance_func=_const_red(redundances),
-        min_relevance=None,
+        min_relevance_perc=None,
         max_redundancy=None,
     )
     ranker(tiny_X, tiny_y, [])
@@ -374,7 +374,7 @@ def test_redundancy_aggregation_max_picks_worst(tiny_X, tiny_y):
         relevance_func=_const_rel([1.0, 1.0, 1.0]),
         redundance_func=redundance_func,
         redundancy_aggregation="max",
-        min_relevance=None,
+        min_relevance_perc=None,
         max_redundancy=None,
     )
     ranker(tiny_X, tiny_y, [])
@@ -397,7 +397,7 @@ def test_redundancy_aggregation_mean_averages_correctly(tiny_X, tiny_y):
         relevance_func=_const_rel([1.0, 1.0, 1.0]),
         redundance_func=redundance_func,
         redundancy_aggregation="mean",
-        min_relevance=None,
+        min_relevance_perc=None,
         max_redundancy=None,
     )
     ranker(tiny_X, tiny_y, [])
@@ -417,7 +417,7 @@ def test_redundancy_aggregation_callable(tiny_X, tiny_y):
         relevance_func=_const_rel([1.0, 1.0, 1.0]),
         redundance_func=_const_red(redundances),
         redundancy_aggregation=min_agg,
-        min_relevance=None,
+        min_relevance_perc=None,
         max_redundancy=None,
     )
     ranker(tiny_X, tiny_y, [])
@@ -451,9 +451,12 @@ def test_seen_set_prevents_double_counting(tiny_X, tiny_y):
 
 
 def test_min_relevance_masks_on_first_call(tiny_X, tiny_y):
+    # relevances [0.8, 0.3, 0.5], sum=1.6, threshold=0.25*1.6=0.4
+    # sorted ascending: [0.3, 0.5, 0.8], cumsum=[0.3, 0.8, 1.6]
+    # 0.3 < 0.4 → feature 1 discarded
     ranker = MRMRRanker(
         relevance_func=_const_rel([0.8, 0.3, 0.5]),
-        min_relevance=0.4,
+        min_relevance_perc=0.25,
     )
     scores = ranker(tiny_X, tiny_y, [])
     assert scores[0] == pytest.approx(0.8)
@@ -466,7 +469,7 @@ def test_min_relevance_masks_on_subsequent_call(tiny_X, tiny_y):
         scheme="difference",
         relevance_func=_const_rel([0.8, 0.3, 0.5]),
         redundance_func=_const_red([0.1, 0.1, 0.1]),
-        min_relevance=0.4,
+        min_relevance_perc=0.25,
     )
     ranker(tiny_X, tiny_y, [])
     scores = ranker(tiny_X, tiny_y, [0])
@@ -499,17 +502,20 @@ def test_max_redundancy_masks_on_subsequent_call(tiny_X, tiny_y):
 
 
 def test_both_thresholds_combined(tiny_X, tiny_y):
+    # relevances [0.8, 0.2, 0.6], sum=1.6, threshold=0.2*1.6=0.32
+    # sorted ascending: [0.2, 0.6, 0.8], cumsum=[0.2, 0.8, 1.6]
+    # 0.2 < 0.32 → feature 1 discarded by min_relevance_perc
     ranker = MRMRRanker(
         scheme="difference",
         relevance_func=_const_rel([0.8, 0.2, 0.6]),
         redundance_func=_const_red([0.1, 0.1, 0.9]),
-        min_relevance=0.3,
+        min_relevance_perc=0.2,
         max_redundancy=0.5,
     )
     ranker(tiny_X, tiny_y, [])
     scores = ranker(tiny_X, tiny_y, [0])
     assert scores[0] == pytest.approx(0.7)  # passes both thresholds
-    assert scores[1] == -np.inf  # fails min_relevance (0.2 < 0.3)
+    assert scores[1] == -np.inf  # fails min_relevance_perc (cumsum 0.2 < 0.32)
     assert scores[2] == -np.inf  # fails max_redundancy (0.9 > 0.5)
 
 
@@ -547,14 +553,14 @@ def test_custom_redundance_func_is_called(tiny_X, tiny_y):
 
 
 def test_mrmr_ranker_classif_returns_valid_scores(tiny_X, tiny_y):
-    ranker = MRMRRanker(regression=False, n_neighbors=2, min_relevance=None)
+    ranker = MRMRRanker(regression=False, n_neighbors=2, min_relevance_perc=None)
     scores = ranker(tiny_X, tiny_y, [])
     assert scores.shape == (3,)
     assert np.all(scores >= 0)
 
 
 def test_mrmr_ranker_regression_returns_valid_scores(tiny_X, tiny_y):
-    ranker = MRMRRanker(regression=True, n_neighbors=2, min_relevance=None)
+    ranker = MRMRRanker(regression=True, n_neighbors=2, min_relevance_perc=None)
     scores = ranker(tiny_X, tiny_y, [])
     assert scores.shape == (3,)
     assert np.all(scores >= 0)
@@ -940,14 +946,14 @@ def test_mrmrcv_params_forwarded_to_ranker():
         LogisticRegression(),
         scheme="ratio",
         n_neighbors=5,
-        min_relevance=0.1,
+        min_relevance_perc=0.1,
         max_redundancy=0.8,
         redundancy_aggregation="mean",
     )
     ranker = selector.importance_getter
     assert ranker.scheme == "ratio"
     assert ranker.n_neighbors == 5
-    assert ranker.min_relevance == 0.1
+    assert ranker.min_relevance_perc == 0.1
     assert ranker.max_redundancy == 0.8
     assert ranker.redundancy_aggregation == "mean"
 
@@ -980,13 +986,13 @@ def test_mrmrcv_stores_params_on_self():
     selector = MRMRCV(
         LogisticRegression(),
         scheme="ratio",
-        min_relevance=0.05,
+        min_relevance_perc=0.05,
         max_redundancy=0.9,
         discrete_features=True,
         redundancy_aggregation="mean",
     )
     assert selector.scheme == "ratio"
-    assert selector.min_relevance == 0.05
+    assert selector.min_relevance_perc == 0.05
     assert selector.max_redundancy == 0.9
     assert selector.discrete_features is True
     assert selector.redundancy_aggregation == "mean"
@@ -1013,6 +1019,6 @@ def test_mrmrcv_auto_discrete_mask_from_dataframe_object_columns():
         max_features_to_select=2,
         cv=2,
         random_state=0,
-        min_relevance=None,
+        min_relevance_perc=None,
     ).fit(X, y)
     assert selector.importance_getter._discrete_mask.tolist() == [False, False, True]
