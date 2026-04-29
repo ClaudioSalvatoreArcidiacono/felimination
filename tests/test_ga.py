@@ -612,3 +612,28 @@ def test_groups_forwarded_to_cv_split(random_state):
     assert len(splits_received) > 0
     for received in splits_received:
         np.testing.assert_array_equal(received, groups)
+
+
+def test_generation_stored_in_solutions_and_cache(random_state):
+    """generation must be recorded on best_solutions_ entries and in evaluation_cache_."""
+    X, y = make_classification(n_samples=50, n_features=4, random_state=random_state)
+    max_generations = 4
+
+    selector = HybridImportanceGACVFeatureSelector(
+        LogisticRegression(random_state=random_state),
+        random_state=random_state,
+        max_generations=max_generations,
+        init_avg_features_num=2,
+        init_std_features_num=1,
+    )
+    selector.fit(X, y)
+
+    # Each best_solutions_ entry must carry the 1-based generation it was recorded at.
+    for i, solution in enumerate(selector.best_solutions_, start=1):
+        assert "generation" in solution
+        assert solution["generation"] == i
+
+    # Every cache entry must have a generation: 0 for initial pool, ≥1 for loop.
+    for entry in selector.evaluation_cache_.values():
+        assert "generation" in entry
+        assert entry["generation"] >= 0

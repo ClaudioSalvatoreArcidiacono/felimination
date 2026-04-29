@@ -301,6 +301,8 @@ class HybridImportanceGACVFeatureSelector(
             The importances of each fold.
         - mean_cv_importances: array
             The mean importances of each fold.
+        - generation: int
+            The generation at which this solution was the best in the pool.
 
     best_solutions_ : list of dict
         The best solutions found by the genetic algorithm at each generation. Each element is
@@ -418,7 +420,9 @@ class HybridImportanceGACVFeatureSelector(
         check_is_fitted(self)
         return self.best_solutions_[-1]
 
-    def _evaluate_calculate_importances(self, pool, X, y, cv, scorer, routed_params):
+    def _evaluate_calculate_importances(
+        self, pool, X, y, cv, scorer, routed_params, generation=0
+    ):
         if effective_n_jobs(self.n_jobs) == 1:
             parallel, func = list, _train_score_get_importance
         else:
@@ -470,6 +474,7 @@ class HybridImportanceGACVFeatureSelector(
                     "train_scores_per_fold": train_scores,
                     "test_scores_per_fold": test_scores,
                     "fold_importances": fold_importances,
+                    "generation": generation,
                 }
 
         for element in pool:
@@ -485,6 +490,7 @@ class HybridImportanceGACVFeatureSelector(
             element["mean_cv_importances"] = np.mean(
                 np.vstack(element["cv_importances"]), axis=0
             )
+            element["generation"] = cached["generation"]
         return pool
 
     def _calculate_fitness(self, pool):
@@ -698,15 +704,15 @@ class HybridImportanceGACVFeatureSelector(
             pool, X, y, cv, scorer, routed_params
         )
         self.best_solutions_ = []
-        for _ in range(1, self.max_generations):
+        for generation in range(1, self.max_generations):
             children = self._cross_over(pool)
             children = self._evaluate_calculate_importances(
-                children, X, y, cv, scorer, routed_params
+                children, X, y, cv, scorer, routed_params, generation=generation
             )
             pool.extend(children)
             mutations = self._mutate(pool, all_features, X, y)
             mutations = self._evaluate_calculate_importances(
-                mutations, X, y, cv, scorer, routed_params
+                mutations, X, y, cv, scorer, routed_params, generation=generation
             )
             pool.extend(mutations)
             pool_sorted = [
@@ -718,7 +724,7 @@ class HybridImportanceGACVFeatureSelector(
                 )
             ]
             pool = pool_sorted[: self.pool_size]
-            self.best_solutions_.append(pool[0])
+            self.best_solutions_.append({**pool[0], "generation": generation})
 
             if self.callbacks:
                 for callback in self.callbacks:
