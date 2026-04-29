@@ -243,6 +243,25 @@ class HybridImportanceGACVFeatureSelector(
         The range of the number of features to replace during mutation. The first element is the
         minimum number of features to replace and the second element is the maximum number of
         features to replace. The right limit is exclusive.
+    mutation_candidate_scorer : callable or None, default=None
+        Optional scoring function used to rank candidate features (those not already in the mutated
+        element) when selecting replacements during mutation. Signature:
+        ``scorer(X, y, selected_features) -> array-like of shape (n_features,)``, where higher
+        scores indicate more desirable candidates and ``selected_features`` is the list of features
+        currently in the pool element being mutated (same type as the feature identifiers used
+        throughout — integer column indices for arrays, column names for DataFrames). When ``None``,
+        replacement features are chosen uniformly at random (original behaviour). The scorer is
+        called once per mutation with the full training data and the element's current feature set.
+        :class:`~felimination.mrmr.MRMRRanker` can be passed directly — it
+        auto-initialises on the first call and caches per-feature redundance
+        vectors across subsequent calls within the same ``fit``.
+    mutation_candidate_selection : {'best', 'sample'}, default='sample'
+        How to pick replacement features from the scored candidates. Only used when
+        ``mutation_candidate_scorer`` is not ``None``:
+
+        - ``'best'``: deterministically select the highest-scored candidates.
+        - ``'sample'``: sample without replacement with probability proportional to the score,
+          preserving diversity while favouring high-scoring features.
     max_generations : int, default=100
         The maximum number of generations to run the genetic algorithm.
     patience : int, default=5
@@ -250,7 +269,7 @@ class HybridImportanceGACVFeatureSelector(
     callbacks : list of callable, default=None
         A list of callables that are called after each generation. Each callable should accept
         the selector and the pool as arguments.
-    fitness_function : str or callable, default=rank_mean_test_score_overfit_fitness
+    fitness_function : str or callable, default="mean_test_score"
         The fitness function to use. Possible string values are: `'mean_test_score'`,
         `'mean_train_score'`, If a callable is passed, it should accept a list of dictionaries where
         each dictionary has the following keys 'features', 'mean_test_score', 'mean_train_score' and
@@ -282,10 +301,17 @@ class HybridImportanceGACVFeatureSelector(
             The importances of each fold.
         - mean_cv_importances: array
             The mean importances of each fold.
+        - generation: int
+            The generation at which this solution was the best in the pool.
 
     best_solutions_ : list of dict
         The best solutions found by the genetic algorithm at each generation. Each element is
         defined as in `best_solution_`.
+
+    evaluation_cache_ : dict
+        Cache mapping ``frozenset(features)`` to evaluation results (scores and importances).
+        Populated during ``fit``; allows ``_evaluate_calculate_importances`` to skip CV for
+        feature sets that have already been evaluated in the same ``fit`` call.
 
     Examples
     --------
@@ -358,7 +384,9 @@ class HybridImportanceGACVFeatureSelector(
         max_generations=100,
         patience=5,
         callbacks=None,
-        fitness_function=rank_mean_test_score_overfit_fitness,
+        fitness_function="mean_test_score",
+        mutation_candidate_scorer=None,
+        mutation_candidate_selection="sample",
     ) -> None:
         self.estimator = estimator
         self.cv = cv
@@ -384,6 +412,8 @@ class HybridImportanceGACVFeatureSelector(
         self.patience = patience
         self.callbacks = callbacks
         self.fitness_function = fitness_function
+        self.mutation_candidate_scorer = mutation_candidate_scorer
+        self.mutation_candidate_selection = mutation_candidate_selection
 
     @property
     def best_solution_(self):
@@ -391,7 +421,7 @@ class HybridImportanceGACVFeatureSelector(
         return self.best_solutions_[-1]
 
     def _evaluate_calculate_importances(
-        self, pool, X, y, groups, cv, scorer, routed_params
+        self, pool, X, y, cv, scorer, routed_params, generation=0
     ):
         if effective_n_jobs(self.n_jobs) == 1:
             parallel, func = list, _train_score_get_importance
@@ -399,54 +429,68 @@ class HybridImportanceGACVFeatureSelector(
             parallel = Parallel(n_jobs=self.n_jobs)
             func = delayed(_train_score_get_importance)
 
-        # Train model, score it and get importances
-        # This array has a shape of (n_elements * n_splits, 3)
-        # where at each row we have the train score, test score and importances
-        # for a given element and split. each group of n_splits rows corresponds
-        # to an element in the pool. So for example if we have 2 elements and 3 splits the
-        # array will look like:
-        # [
-        #   [train_score_el1_split1, test_score_el1_split1, importances_el1_split1],
-        #   [train_score_el1_split2, test_score_el1_split2, importances_el1_split2],
-        #   [train_score_el1_split3, test_score_el1_split3, importances_el1_split3],
-        #   [train_score_el2_split1, test_score_el2_split1, importances_el2_split1],
-        #   [train_score_el2_split2, test_score_el2_split2, importances_el2_split2],
-        #   [train_score_el2_split3, test_score_el2_split3, importances_el2_split3],
-        # ]
-        scores_importances_1d_array = parallel(
-            func(
-                self.estimator,
-                _select_X_with_features(X, element["features"]),
-                y,
-                train,
-                test,
-                scorer,
-                self.importance_getter,
-                routed_params=routed_params,
+        splits = list(cv.split(X, y, **routed_params.splitter.split))
+        n_splits = len(splits)
+
+        # Deduplicate by frozenset so each unique feature set appears exactly
+        # once in uncached. Duplicates in pool would break the
+        # [i*n_splits:(i+1)*n_splits] result-slicing below.
+        seen_fs: set = set()
+        uncached = []
+        for el in pool:
+            fs = frozenset(el["features"])
+            if fs not in self.evaluation_cache_ and fs not in seen_fs:
+                uncached.append(el)
+                seen_fs.add(fs)
+
+        if uncached:
+            scores_importances_1d_array = parallel(
+                func(
+                    self.estimator,
+                    _select_X_with_features(X, element["features"]),
+                    y,
+                    train,
+                    test,
+                    scorer,
+                    self.importance_getter,
+                    routed_params=routed_params,
+                )
+                for element in uncached
+                for train, test in splits
             )
-            for element in pool
-            for train, test in cv.split(X, y, **routed_params.splitter.split)
-        )
-        n_splits = len(list(cv.split(X, y, **routed_params.splitter.split)))
-        for i, element in enumerate(pool):
-            scores_importances = scores_importances_1d_array[
-                i * n_splits : (i + 1) * n_splits
+            for i, element in enumerate(uncached):
+                fold_results = scores_importances_1d_array[
+                    i * n_splits : (i + 1) * n_splits
+                ]
+                train_scores = [r[0] for r in fold_results]
+                test_scores = [r[1] for r in fold_results]
+                # Store per-feature importances as a dict so retrieval is
+                # order-independent when the same feature set is reused.
+                fold_importances = [
+                    dict(zip(element["features"], np.vstack([r[2]]).mean(axis=0)))
+                    for r in fold_results
+                ]
+                self.evaluation_cache_[frozenset(element["features"])] = {
+                    "train_scores_per_fold": train_scores,
+                    "test_scores_per_fold": test_scores,
+                    "fold_importances": fold_importances,
+                    "generation": generation,
+                }
+
+        for element in pool:
+            cached = self.evaluation_cache_[frozenset(element["features"])]
+            element["train_scores_per_fold"] = cached["train_scores_per_fold"]
+            element["test_scores_per_fold"] = cached["test_scores_per_fold"]
+            element["cv_importances"] = [
+                np.array([fold_imp[f] for f in element["features"]])
+                for fold_imp in cached["fold_importances"]
             ]
-            train_scores_per_fold = [
-                score_importance[0] for score_importance in scores_importances
-            ]
-            test_scores_per_fold = [
-                score_importance[1] for score_importance in scores_importances
-            ]
-            cv_importances = [
-                score_importance[2] for score_importance in scores_importances
-            ]
-            element["train_scores_per_fold"] = train_scores_per_fold
-            element["test_scores_per_fold"] = test_scores_per_fold
-            element["cv_importances"] = cv_importances
-            element["mean_train_score"] = np.mean(train_scores_per_fold)
-            element["mean_test_score"] = np.mean(test_scores_per_fold)
-            element["mean_cv_importances"] = np.mean(np.vstack(cv_importances), axis=0)
+            element["mean_train_score"] = np.mean(cached["train_scores_per_fold"])
+            element["mean_test_score"] = np.mean(cached["test_scores_per_fold"])
+            element["mean_cv_importances"] = np.mean(
+                np.vstack(element["cv_importances"]), axis=0
+            )
+            element["generation"] = cached["generation"]
         return pool
 
     def _calculate_fitness(self, pool):
@@ -492,44 +536,77 @@ class HybridImportanceGACVFeatureSelector(
 
         return children
 
-    def _mutate(self, pool, all_features):
+    def _mutate(self, pool, all_features, X, y):
         mutated_pool = []
         for _ in range(self.n_mutations):
             element = np.random.choice(pool)
 
-            # Randomly increase or decrease the number of features
             number_of_features = max(
                 len(element["features"])
                 + np.random.randint(*self.range_change_n_features_mutation),
                 self.min_features_to_select,
             )
 
-            # Replace the least important features with random features
             n_of_features_to_replace = np.random.randint(
                 *self.range_randomly_swapped_features_mutation
             )
+            if n_of_features_to_replace <= 0:
+                continue
 
-            shuffled_all_features = [
+            candidates = [
                 feat for feat in all_features if feat not in element["features"]
             ]
-            np.random.shuffle(shuffled_all_features)
-            shuffled_all_features = list(shuffled_all_features)
 
-            sorted_features = list(
-                np.array(element["features"])[
-                    np.argsort(-np.array(element["mean_cv_importances"]))
-                ]
-            )
+            # Preserve original feature type (list(np.array(feats)[argsort]) wraps
+            # ints as np.int64 which breaks dict lookups downstream).
+            orig_feats = element["features"]
+            sort_order = np.argsort(-np.array(element["mean_cv_importances"]))
+            sorted_features = [orig_feats[i] for i in sort_order]
+
+            if self.mutation_candidate_scorer is not None and len(candidates) > 0:
+                all_scores = np.asarray(
+                    self.mutation_candidate_scorer(X, y, element["features"]),
+                    dtype=float,
+                )
+                feature_to_score = {
+                    feat: all_scores[i] for i, feat in enumerate(all_features)
+                }
+                candidate_scores = np.array([feature_to_score[c] for c in candidates])
+                if self.mutation_candidate_selection == "best":
+                    # -inf scores sort naturally to the end via argsort
+                    ordered_candidates = [
+                        candidates[i] for i in np.argsort(-candidate_scores)
+                    ]
+                else:  # 'sample'
+                    # Separate finite-scored from -inf candidates so probability
+                    # normalisation stays well-defined (MRMRRanker emits -inf for
+                    # low-relevance features).
+                    finite_mask = np.isfinite(candidate_scores)
+                    eligible = [c for c, m in zip(candidates, finite_mask) if m]
+                    ineligible = [c for c, m in zip(candidates, finite_mask) if not m]
+                    if eligible:
+                        eligible_scores = candidate_scores[finite_mask]
+                        # Shift so min→0, then add eps so every eligible candidate
+                        # has nonzero probability even when all scores are equal.
+                        shifted = eligible_scores - eligible_scores.min() + 1e-10
+                        probs = shifted / shifted.sum()
+                        sampled = np.random.choice(
+                            len(eligible), size=len(eligible), replace=False, p=probs
+                        )
+                        ordered_eligible = [eligible[i] for i in sampled]
+                    else:
+                        ordered_eligible = []
+                    np.random.shuffle(ineligible)
+                    ordered_candidates = ordered_eligible + ineligible
+            else:
+                ordered_candidates = candidates[:]
+                np.random.shuffle(ordered_candidates)
 
             mutated_features = (
-                sorted_features[:-n_of_features_to_replace] + shuffled_all_features
+                sorted_features[:-n_of_features_to_replace] + ordered_candidates
             )[:number_of_features]
 
-            mutated_pool.append(
-                {
-                    "features": mutated_features,
-                }
-            )
+            mutated_pool.append({"features": mutated_features})
         return mutated_pool
 
     def _get_support_mask(self):
@@ -563,7 +640,7 @@ class HybridImportanceGACVFeatureSelector(
         else:
             routed_params = Bunch(
                 estimator=Bunch(fit={}),
-                splitter=Bunch(split={"groups": params.pop("groups", None)}),
+                splitter=Bunch(split={"groups": groups}),
                 scorer=Bunch(score={}),
             )
 
@@ -595,6 +672,7 @@ class HybridImportanceGACVFeatureSelector(
             all_features = list(range(n_features))
 
         np.random.seed(self.random_state)
+        self.evaluation_cache_ = {}
 
         # Create the initial pool of solutions
         pool = [
@@ -623,18 +701,18 @@ class HybridImportanceGACVFeatureSelector(
 
         # Evaluate the initial pool of solutions
         pool = self._evaluate_calculate_importances(
-            pool, X, y, groups, cv, scorer, routed_params
+            pool, X, y, cv, scorer, routed_params
         )
         self.best_solutions_ = []
-        for _ in range(1, self.max_generations):
+        for generation in range(1, self.max_generations):
             children = self._cross_over(pool)
             children = self._evaluate_calculate_importances(
-                children, X, y, groups, cv, scorer, routed_params
+                children, X, y, cv, scorer, routed_params, generation=generation
             )
             pool.extend(children)
-            mutations = self._mutate(pool, all_features)
+            mutations = self._mutate(pool, all_features, X, y)
             mutations = self._evaluate_calculate_importances(
-                mutations, X, y, groups, cv, scorer, routed_params
+                mutations, X, y, cv, scorer, routed_params, generation=generation
             )
             pool.extend(mutations)
             pool_sorted = [
@@ -646,7 +724,7 @@ class HybridImportanceGACVFeatureSelector(
                 )
             ]
             pool = pool_sorted[: self.pool_size]
-            self.best_solutions_.append(pool[0])
+            self.best_solutions_.append({**pool[0], "generation": generation})
 
             if self.callbacks:
                 for callback in self.callbacks:

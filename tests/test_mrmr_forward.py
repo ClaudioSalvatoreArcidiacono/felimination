@@ -288,7 +288,7 @@ def test_first_call_sets_relevance_attr(tiny_X, tiny_y):
     np.testing.assert_array_equal(ranker.relevance_, relevances)
 
 
-def test_first_call_resets_state_on_repeat(tiny_X, tiny_y):
+def test_same_data_preserves_cache(tiny_X, tiny_y):
     call_count = [0]
 
     def relevance_func(X, y):
@@ -298,9 +298,28 @@ def test_first_call_resets_state_on_repeat(tiny_X, tiny_y):
     ranker = MRMRRanker(relevance_func=relevance_func)
     ranker(tiny_X, tiny_y, [])
     ranker(tiny_X, tiny_y, [0])
-    ranker(tiny_X, tiny_y, [])  # second reset
-    assert ranker.relevance_[0] == 2.0
-    assert ranker._seen == set()
+    ranker(tiny_X, tiny_y, [])  # same data — cache is reused, no re-init
+    assert ranker.relevance_[0] == 1.0  # relevance computed only once
+    assert 0 in ranker._redundance_cache  # redundance entry still present
+
+
+def test_different_data_resets_cache(tiny_X, tiny_y):
+    call_count = [0]
+
+    def relevance_func(X, y):
+        call_count[0] += 1
+        return np.full(X.shape[1], float(call_count[0]))
+
+    ranker = MRMRRanker(relevance_func=relevance_func)
+    # First fit: select features 0 and 1 — both end up in the redundance cache.
+    ranker(tiny_X, tiny_y, [0, 1])
+    assert set(ranker._redundance_cache) == {0, 1}
+
+    # Different data — fingerprint changes, caches must be cleared.
+    other_X = tiny_X * 2
+    ranker(other_X, tiny_y, [0])  # only feature 0 selected this time
+    assert ranker.relevance_[0] == 2.0  # re-initialised
+    assert set(ranker._redundance_cache) == {0}  # stale entry for 1 was cleared
 
 
 def test_scheme_difference_combines_correctly(tiny_X, tiny_y):
@@ -430,7 +449,7 @@ def test_redundancy_aggregation_invalid_raises():
         MRMRRanker(redundancy_aggregation="median")
 
 
-def test_seen_set_prevents_double_counting(tiny_X, tiny_y):
+def test_cache_prevents_double_counting(tiny_X, tiny_y):
     call_count = [0]
 
     def redundance_func(X, y_feat):
@@ -444,7 +463,7 @@ def test_seen_set_prevents_double_counting(tiny_X, tiny_y):
     ranker(tiny_X, tiny_y, [])
     ranker(tiny_X, tiny_y, [0])
     assert call_count[0] == 1
-    ranker(tiny_X, tiny_y, [0])  # feature 0 already seen
+    ranker(tiny_X, tiny_y, [0])  # feature 0 already in cache
     assert call_count[0] == 1
     ranker(tiny_X, tiny_y, [0, 1])  # feature 1 is new
     assert call_count[0] == 2

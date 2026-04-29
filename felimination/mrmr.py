@@ -57,8 +57,8 @@ def abs_pearson_correlation(X, y):
 
 
 class MRMRRanker:
-    """Stateful importance getter implementing the Minimum Redundancy
-    Maximum Relevance score, designed for [`ForwardSelectorCV`](/felimination/reference/selectors/forward_selection/#felimination.forward.ForwardSelectorCV).
+    """Importance getter implementing the Minimum Redundancy Maximum Relevance
+    score.
 
     By default both relevance (feature-vs-target) and redundance
     (feature-vs-already-selected-feature) are computed with mutual
@@ -66,10 +66,20 @@ class MRMRRanker:
     transparently when ``discrete_features`` is supplied. Both functions
     can be swapped out via ``relevance_func`` / ``redundance_func``.
 
-    The ranker keeps internal caches across calls within a single forward
-    selection run. Caches are reset whenever it is called with an empty
-    ``selected_idx`` (which [`ForwardSelectorCV`](/felimination/reference/selectors/forward_selection/#felimination.forward.ForwardSelectorCV) always does at the start
-    of every ``fit``).
+    The ranker is lazy and stateful.  On every call it computes a lightweight
+    fingerprint of ``(X, y)`` (shape, dtype, boundary values).  If the
+    fingerprint matches the previous call, all cached state — relevance and
+    per-feature redundance vectors — is reused.  If it differs (different
+    dataset or different CV fold), the caches are reset automatically before
+    re-initialising.  This means the same instance can be reused across
+    successive ``fit`` calls efficiently.
+
+    Redundance is stored per feature in ``_redundance_cache``: the redundance
+    vector for a given feature is computed at most once per dataset — if the
+    same feature appears in ``selected_idx`` of a later call, the cached
+    vector is reused directly.
+
+    The ranker auto-initialises on its first call.
 
     Parameters
     ----------
@@ -241,14 +251,25 @@ class MRMRRanker:
 
     def _reset(self):
         self.relevance_ = None
-        self._redundance_sum = None
-        self._redundance_max = None
-        self._seen = set()
+        self._redundance_cache = {}
         self._discrete_mask = None
         self._low_relevance_mask = None
         self._fitted_discrete_imputer = None
         self._fitted_continuous_imputer = None
         self._sampled_indices = None
+        self._fingerprint_ = None
+
+    @staticmethod
+    def _dataset_fingerprint(X_arr, y):
+        y_arr = np.asarray(y)
+        return (
+            X_arr.shape,
+            X_arr.dtype,
+            y_arr.shape,
+            X_arr.flat[0] if X_arr.size else None,
+            X_arr.flat[-1] if X_arr.size else None,
+            y_arr[0] if y_arr.size else None,
+        )
 
     def _resolve_discrete_mask(self, X):
         n = X.shape[1]
@@ -430,62 +451,78 @@ class MRMRRanker:
         denom = np.where(np.abs(redundance) < 1e-10, 1e-10, redundance)
         return relevance / denom
 
-    def _aggregate_redundance(self):
+    def _initialize(self, X, X_arr, y):
+        """Compute relevance and set up preprocessing state.
+
+        Returns the imputed and encoded X_arr (not yet sampled) so callers
+        can apply ``_sampled_indices`` themselves if needed.
+        """
+        n_features = X_arr.shape[1]
+        self._discrete_mask = self._resolve_discrete_mask(X)
+        self._fit_imputers(X_arr)
+        X_arr = self._impute_X(X_arr)
+        X_arr = self._encode_X(X_arr)
+        self._sampled_indices = self._draw_sample_indices(X_arr.shape[0], y)
+        if self._sampled_indices is not None:
+            X_sample = X_arr[self._sampled_indices]
+            y_sample = np.asarray(y)[self._sampled_indices]
+        else:
+            X_sample, y_sample = X_arr, y
+        self.relevance_ = self._compute_relevance(X_sample, y_sample)
+        self._low_relevance_mask = None
+        if self.min_relevance_perc is not None:
+            total = self.relevance_.sum()
+            min_rel = self.min_relevance_perc * total
+            sorted_idx = np.argsort(self.relevance_)
+            cumsum = np.cumsum(self.relevance_[sorted_idx])
+            self._low_relevance_mask = np.zeros(n_features, dtype=bool)
+            self._low_relevance_mask[sorted_idx[cumsum < min_rel]] = True
+        return X_arr
+
+    def _aggregate_redundance(self, rows):
         agg = self.redundancy_aggregation
         if agg == "mean":
-            return self._redundance_sum / max(len(self._seen), 1)
+            return np.mean(rows, axis=0)
         if agg == "max":
-            return self._redundance_max
-        matrix = np.vstack(self._redundance_rows)
+            return np.max(rows, axis=0)
+        matrix = np.vstack(rows)
         return np.asarray(agg(matrix), dtype=float)
 
     def __call__(self, X, y, selected_idx):
         X_arr = _as_dense_array(X)
-        n_features = X_arr.shape[1]
 
-        if not selected_idx:
+        fp = self._dataset_fingerprint(X_arr, y)
+        if fp != self._fingerprint_:
             self._reset()
-            self._discrete_mask = self._resolve_discrete_mask(X)
-            self._fit_imputers(X_arr)
+            self._fingerprint_ = fp
+
+        if self.relevance_ is None:
+            X_arr = self._initialize(X, X_arr, y)
+        else:
             X_arr = self._impute_X(X_arr)
             X_arr = self._encode_X(X_arr)
-            self._sampled_indices = self._draw_sample_indices(X_arr.shape[0], y)
-            if self._sampled_indices is not None:
-                X_sample = X_arr[self._sampled_indices]
-                y_sample = np.asarray(y)[self._sampled_indices]
-            else:
-                X_sample, y_sample = X_arr, y
-            self.relevance_ = self._compute_relevance(X_sample, y_sample)
-            self._redundance_sum = np.zeros(n_features, dtype=float)
-            self._redundance_max = np.full(n_features, -np.inf, dtype=float)
-            self._redundance_rows = []
+
+        if self._sampled_indices is not None:
+            X_arr = X_arr[self._sampled_indices]
+
+        if not selected_idx:
             scores = self.relevance_.copy()
-            if self.min_relevance_perc is not None:
-                total = self.relevance_.sum()
-                min_rel = self.min_relevance_perc * total
-                sorted_idx = np.argsort(self.relevance_)
-                cumsum = np.cumsum(self.relevance_[sorted_idx])
-                self._low_relevance_mask = np.zeros(n_features, dtype=bool)
-                self._low_relevance_mask[sorted_idx[cumsum < min_rel]] = True
+            if self._low_relevance_mask is not None:
                 scores[self._low_relevance_mask] = -np.inf
             return scores
 
-        X_arr = self._impute_X(X_arr)
-        X_arr = self._encode_X(X_arr)
-        if self._sampled_indices is not None:
-            X_arr = X_arr[self._sampled_indices]
         candidate_mask = (
             ~self._low_relevance_mask if self._low_relevance_mask is not None else None
         )
         for i in selected_idx:
-            if i not in self._seen:
-                red = self._compute_redundance(X_arr, i, candidate_mask)
-                self._redundance_sum += red
-                self._redundance_max = np.maximum(self._redundance_max, red)
-                self._redundance_rows.append(red)
-                self._seen.add(i)
+            if i not in self._redundance_cache:
+                self._redundance_cache[i] = self._compute_redundance(
+                    X_arr, i, candidate_mask
+                )
 
-        agg_red = self._aggregate_redundance()
+        rows = [self._redundance_cache[i] for i in selected_idx]
+
+        agg_red = self._aggregate_redundance(rows)
         scores = self._combine(self.relevance_, agg_red)
         if self._low_relevance_mask is not None:
             scores[self._low_relevance_mask] = -np.inf
