@@ -3,14 +3,18 @@ import pandas as pd
 import pytest
 from sklearn.datasets import make_classification, make_friedman1
 from sklearn.linear_model import LinearRegression, LogisticRegression
-from sklearn.model_selection import RepeatedKFold, RepeatedStratifiedKFold
+from sklearn.model_selection import GroupKFold, RepeatedKFold, RepeatedStratifiedKFold
 
 from felimination.ga import (
     HybridImportanceGACVFeatureSelector,
     rank_mean_test_score_fitness,
     rank_mean_test_score_overfit_fitness,
 )
+
+
+_OVERFIT_FITNESS = rank_mean_test_score_overfit_fitness
 from felimination.importance import PermutationImportance
+from felimination.mrmr import MRMRRanker
 
 
 @pytest.fixture(scope="session")
@@ -268,6 +272,7 @@ def test_find_best_features_classification_n_jobs_arrays(
         n_jobs=n_jobs,
         init_avg_features_num=n_useful_features_classification,
         init_std_features_num=1,
+        fitness_function=_OVERFIT_FITNESS,
     )
     selector.fit(X, y)
 
@@ -319,6 +324,7 @@ def test_find_best_features_regression_n_jobs_arrays(
         init_avg_features_num=n_useful_features_regression,
         init_std_features_num=1,
         importance_getter=PermutationImportance(),
+        fitness_function=_OVERFIT_FITNESS,
     )
     selector.fit(X, y)
     assert selector.support_[:n_useful_features_regression].sum() >= 4
@@ -342,6 +348,7 @@ def test_find_best_features_classification_n_jobs_pandas(  # parallel:  73s; seq
         n_jobs=n_jobs,
         init_avg_features_num=n_useful_features_classification,
         init_std_features_num=1,
+        fitness_function=_OVERFIT_FITNESS,
     )
     selector.fit(X, y)
 
@@ -367,7 +374,241 @@ def test_find_best_features_regression_n_jobs_pandas(
         init_avg_features_num=n_useful_features_regression,
         init_std_features_num=1,
         importance_getter=PermutationImportance(),
+        fitness_function=_OVERFIT_FITNESS,
     )
     selector.fit(X, y)
     assert selector.support_[:n_useful_features_regression].sum() >= 4
     assert selector.support_[n_useful_features_regression:].sum() <= 1
+
+
+# ── mutation_candidate_scorer helpers ────────────────────────────────────────
+
+
+def _make_pool_element(features, importances):
+    return {
+        "features": features,
+        "mean_cv_importances": importances,
+        "mean_test_score": 0.8,
+        "mean_train_score": 0.9,
+    }
+
+
+def _fixed_scorer(n_features, high_indices):
+    """Return a scorer giving 100.0 to ``high_indices``, 0.0 to the rest."""
+
+    def scorer(X, y, selected_features):
+        scores = np.zeros(n_features)
+        scores[list(high_indices)] = 100.0
+        return scores
+
+    return scorer
+
+
+def _make_selector_for_mutate(scorer, selection, n_mutations=20):
+    """Minimal selector configured for deterministic _mutate unit tests."""
+    return HybridImportanceGACVFeatureSelector(
+        LogisticRegression(),
+        mutation_candidate_scorer=scorer,
+        mutation_candidate_selection=selection,
+        n_mutations=n_mutations,
+        # keep element size fixed: delta always 0, replace exactly 1
+        range_change_n_features_mutation=(0, 1),
+        range_randomly_swapped_features_mutation=(1, 2),
+        min_features_to_select=1,
+    )
+
+
+# ── _mutate unit tests ───────────────────────────────────────────────────────
+
+
+def test_mutate_best_selection_prefers_highest_scored_candidate(random_state):
+    """'best' mode always picks the highest-scored candidate as the replacement."""
+    np.random.seed(random_state)
+    n_features = 5
+    # pool element holds features 1,2,3; candidates are 0 (score=100) and 4 (score=0)
+    pool = [_make_pool_element([1, 2, 3], [0.3, 0.2, 0.1])]
+    all_features = list(range(n_features))
+    X = np.random.rand(50, n_features)
+    y = np.random.randint(0, 2, 50)
+
+    selector = _make_selector_for_mutate(_fixed_scorer(n_features, [0]), "best")
+    mutations = selector._mutate(pool, all_features, X, y)
+
+    # kept=[1,2], ordered_candidates=[0,4]; result is [1,2,0] for every mutation.
+    for m in mutations:
+        assert 0 in m["features"], f"Expected feature 0 in {m['features']}"
+
+
+def test_mutate_best_selection_inf_scored_candidates_placed_last(random_state):
+    """Features with -inf score are never picked before finite-scored ones in 'best' mode."""
+    np.random.seed(random_state)
+    n_features = 5
+
+    def scorer_with_inf(X, y, selected_features):
+        scores = np.full(n_features, -np.inf)
+        scores[4] = 100.0
+        return scores
+
+    pool = [_make_pool_element([1, 2, 3], [0.3, 0.2, 0.1])]
+    all_features = list(range(n_features))
+    X = np.random.rand(50, n_features)
+    y = np.random.randint(0, 2, 50)
+
+    selector = _make_selector_for_mutate(scorer_with_inf, "best")
+    mutations = selector._mutate(pool, all_features, X, y)
+
+    for m in mutations:
+        assert 4 in m["features"], f"Expected feature 4 in {m['features']}"
+        assert (
+            0 not in m["features"]
+        ), f"Feature 0 (-inf) should not appear in {m['features']}"
+
+
+def test_mutate_sample_selection_only_picks_valid_candidates(random_state):
+    """'sample' mode never includes features already in the element, no duplicates."""
+    np.random.seed(random_state)
+    n_features = 6
+    pool = [_make_pool_element([0, 1], [0.5, 0.5])]
+    all_features = list(range(n_features))
+    X = np.random.rand(50, n_features)
+    y = np.random.randint(0, 2, 50)
+
+    # features 4 and 5 have score 0; ensure they can still be sampled (eps prevents prob=0)
+    scorer = _fixed_scorer(n_features, [2, 3])
+    selector = _make_selector_for_mutate(scorer, "sample", n_mutations=30)
+    mutations = selector._mutate(pool, all_features, X, y)
+
+    for m in mutations:
+        assert len(m["features"]) == len(set(m["features"])), "Duplicate features found"
+        assert all(f in all_features for f in m["features"]), "Invalid feature found"
+
+
+def test_mutate_sample_selection_excludes_inf_scored_candidates(random_state):
+    """'sample' mode never selects -inf scored candidates when finite ones exist."""
+    np.random.seed(random_state)
+    n_features = 5
+
+    def scorer_with_inf(X, y, selected_features):
+        scores = np.full(n_features, -np.inf)
+        scores[4] = 100.0
+        return scores
+
+    pool = [_make_pool_element([1, 2, 3], [0.3, 0.2, 0.1])]
+    all_features = list(range(n_features))
+    X = np.random.rand(50, n_features)
+    y = np.random.randint(0, 2, 50)
+
+    selector = _make_selector_for_mutate(scorer_with_inf, "sample")
+    mutations = selector._mutate(pool, all_features, X, y)
+
+    for m in mutations:
+        assert 0 not in m["features"], f"Feature 0 (-inf) appeared in {m['features']}"
+
+
+def test_mutate_best_selection_pandas(random_state):
+    """'best' mode resolves column names correctly for DataFrame inputs."""
+    np.random.seed(random_state)
+    columns = ["x1", "x2", "rand1", "rand2", "rand3"]
+    X = pd.DataFrame(np.random.rand(50, 5), columns=columns)
+    y = pd.Series(np.random.randint(0, 2, 50))
+
+    def scorer(X_df, y_, selected_features):
+        scores = np.zeros(X_df.shape[1])
+        scores[0] = 100.0  # x1 gets highest score
+        return scores
+
+    # candidates are x1 (score=100) and x2 (score=0)
+    pool = [_make_pool_element(["rand1", "rand2", "rand3"], [0.3, 0.2, 0.1])]
+
+    selector = _make_selector_for_mutate(scorer, "best")
+    mutations = selector._mutate(pool, columns, X, y)
+
+    for m in mutations:
+        assert "x1" in m["features"], f"Expected 'x1' in {m['features']}"
+
+
+# ── end-to-end: MRMRRanker as mutation_candidate_scorer ─────────────────────
+
+
+def test_find_best_features_classification_mrmr_mutation_scorer_best(
+    x_y_classification_with_rand_columns_arrays,
+    n_useful_features_classification,
+    cv_classification,
+    random_state,
+):
+    """End-to-end: MRMRRanker relevance scores guide mutation candidate selection ('best')."""
+    X, y = x_y_classification_with_rand_columns_arrays
+    mrmr_ranker = MRMRRanker(regression=False, random_state=random_state)
+
+    selector = HybridImportanceGACVFeatureSelector(
+        LogisticRegression(random_state=random_state),
+        random_state=random_state,
+        cv=cv_classification,
+        init_avg_features_num=n_useful_features_classification,
+        init_std_features_num=1,
+        mutation_candidate_scorer=mrmr_ranker,
+        mutation_candidate_selection="best",
+        fitness_function=_OVERFIT_FITNESS,
+    )
+    selector.fit(X, y)
+
+    assert (
+        selector.support_[:n_useful_features_classification].sum()
+        >= n_useful_features_classification - 1
+    )
+    assert selector.support_[n_useful_features_classification:].sum() <= 2
+
+
+def test_find_best_features_classification_mrmr_mutation_scorer_sample(
+    x_y_classification_with_rand_columns_arrays,
+    n_useful_features_classification,
+    cv_classification,
+    random_state,
+):
+    """End-to-end: MRMRRanker relevance scores guide mutation candidate selection ('sample')."""
+    X, y = x_y_classification_with_rand_columns_arrays
+    mrmr_ranker = MRMRRanker(regression=False, random_state=random_state)
+
+    selector = HybridImportanceGACVFeatureSelector(
+        LogisticRegression(random_state=random_state),
+        random_state=random_state,
+        cv=cv_classification,
+        init_avg_features_num=n_useful_features_classification,
+        init_std_features_num=1,
+        mutation_candidate_scorer=mrmr_ranker,
+        mutation_candidate_selection="sample",
+    )
+    selector.fit(X, y)
+
+    assert (
+        selector.support_[:n_useful_features_classification].sum()
+        >= n_useful_features_classification - 1
+    )
+    assert selector.support_[n_useful_features_classification:].sum() <= 2
+
+
+def test_groups_forwarded_to_cv_split(random_state):
+    """groups passed to fit() must reach cv.split() — not silently ignored."""
+    X, y = make_classification(n_samples=50, n_features=4, random_state=random_state)
+    groups = np.tile(np.arange(5), 10)  # 5 groups of 10 samples each
+
+    splits_received = []
+
+    class _CapturingGroupKFold(GroupKFold):
+        def split(self, X, y=None, groups=None):
+            splits_received.append(groups)
+            return super().split(X, y, groups=groups)
+
+    selector = HybridImportanceGACVFeatureSelector(
+        LogisticRegression(random_state=random_state),
+        random_state=random_state,
+        cv=_CapturingGroupKFold(n_splits=5),
+        max_generations=2,
+        init_avg_features_num=2,
+        init_std_features_num=1,
+    )
+    selector.fit(X, y, groups=groups)
+
+    assert len(splits_received) > 0
+    for received in splits_received:
+        np.testing.assert_array_equal(received, groups)
