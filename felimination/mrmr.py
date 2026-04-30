@@ -491,6 +491,17 @@ class MRMRRanker:
     def __call__(self, X, y, selected_idx):
         X_arr = _as_dense_array(X)
 
+        # When X is a DataFrame and features are column names, convert to integer positions
+        # so they can be used as numpy array indices and as consistent cache keys.
+        if selected_idx and not isinstance(selected_idx[0], (int, np.integer)):
+            if not hasattr(X, "columns"):
+                raise ValueError(
+                    "selected_idx contains non-integer values but X has no .columns "
+                    "attribute — cannot resolve feature identifiers to column positions."
+                )
+            col_to_idx = {col: i for i, col in enumerate(X.columns)}
+            selected_idx = [col_to_idx[s] for s in selected_idx]
+
         fp = self._dataset_fingerprint(X_arr, y)
         if fp != self._fingerprint_:
             self._reset()

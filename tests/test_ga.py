@@ -587,6 +587,35 @@ def test_find_best_features_classification_mrmr_mutation_scorer_sample(
     assert selector.support_[n_useful_features_classification:].sum() <= 2
 
 
+def test_find_best_features_classification_mrmr_mutation_scorer_pandas(
+    x_y_classification_with_rand_columns_pandas,
+    n_useful_features_classification,
+    cv_classification,
+    random_state,
+):
+    """MRMRRanker must handle pandas DataFrames (string column names as selected_idx)."""
+    X, y = x_y_classification_with_rand_columns_pandas
+    mrmr_ranker = MRMRRanker(regression=False, random_state=random_state)
+
+    selector = HybridImportanceGACVFeatureSelector(
+        LogisticRegression(random_state=random_state),
+        random_state=random_state,
+        cv=cv_classification,
+        init_avg_features_num=n_useful_features_classification,
+        init_std_features_num=1,
+        mutation_candidate_scorer=mrmr_ranker,
+        mutation_candidate_selection="sample",
+        fitness_function=_OVERFIT_FITNESS,
+    )
+    selector.fit(X, y)
+
+    assert (
+        selector.support_[:n_useful_features_classification].sum()
+        >= n_useful_features_classification - 1
+    )
+    assert selector.support_[n_useful_features_classification:].sum() <= 2
+
+
 def test_groups_forwarded_to_cv_split(random_state):
     """groups passed to fit() must reach cv.split() — not silently ignored."""
     X, y = make_classification(n_samples=50, n_features=4, random_state=random_state)
