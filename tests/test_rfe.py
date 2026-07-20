@@ -9,7 +9,7 @@ from sklearn.datasets import make_classification, make_friedman1
 from sklearn.exceptions import NotFittedError
 from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.metrics import make_scorer
-from sklearn.model_selection import ShuffleSplit
+from sklearn.model_selection import ShuffleSplit, StratifiedGroupKFold
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.utils._tags import get_tags
@@ -351,6 +351,30 @@ def test_rfecv_set_n_features_to_select_exception_cases(
 
     with pytest.raises(ValueError):
         selector.set_n_features_to_select(X_with_rand.shape[0] + 1)
+
+
+def test_perm_imp_rfecv_groups_passed_to_splitter(
+    x_y_classification_with_rand_columns_arrays,
+    n_useful_features_classification,
+    random_state,
+):
+    """Regression test: groups must reach the splitter with metadata routing
+    disabled (the default). Previously the fallback branch in `fit()` read
+    `params.pop("groups", None)` instead of the `groups` argument bound by
+    Python, so `groups` was always None and CV splitters that require it
+    (e.g. StratifiedGroupKFold) would fail.
+    """
+    X_with_rand, y = x_y_classification_with_rand_columns_arrays
+    groups = np.random.RandomState(random_state).randint(
+        0, 10, size=X_with_rand.shape[0]
+    )
+    selector = PermutationImportanceRFECV(
+        LogisticRegression(random_state=random_state),
+        cv=StratifiedGroupKFold(n_splits=3),
+        min_features_to_select=n_useful_features_classification,
+    )
+
+    selector.fit(X_with_rand, y, groups=groups)
 
 
 @pytest.mark.usefixtures("enable_metadata_routing")

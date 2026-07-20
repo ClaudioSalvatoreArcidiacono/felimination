@@ -286,7 +286,7 @@ class FeliminationRFECV(RFECV):
         else:
             routed_params = Bunch(
                 estimator=Bunch(fit={}),
-                splitter=Bunch(split={"groups": params.pop("groups", None)}),
+                splitter=Bunch(split={"groups": groups}),
                 scorer=Bunch(score={}),
             )
 
